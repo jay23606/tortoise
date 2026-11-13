@@ -3519,20 +3519,23 @@ def _is_safe_root_file(path: str) -> bool:
 #     → its file list does NOT contain this path.
 #
 # ⛔ ONLY ON A COMPLETE CLONE do these reproduce locally — CHECK FIRST, with
-# `git rev-parse --is-shallow-repository`, because a lane's checkout may not be
-# one (the one measured here is complete and returns the two outputs below):
+# `git rev-parse --is-shallow-repository`, and DO NOT assume which you have: the
+# fleet re-shallows, so the same checkout can answer differently on two days.
+# The outputs below are attributed to the kind of clone that produces them and
+# nothing else:
 #
+#   COMPLETE clone (full history):
 #   git log origin/main --diff-filter=A -- tests/test_surface_manifest.py  → `79c3d9dbe`
 #   git merge-base --is-ancestor 79c3d9dbe origin/main                     → exit 0
 #
 # `git fetch --unshallow` first, or do not run them at all. A graft boundary has
 # no local parent, so git diffs it against the EMPTY TREE: it is reported as an
 # addition, and every ancestry test for a commit OLDER than the boundary returns
-# a false negative. Measured on the checkout that produced the previous wrong
-# number — `6429a14b49` is named in `$(git rev-parse --git-common-dir)/shallow`,
+# a false negative. SHALLOW clone readings, measured on this repo's shallow
+# checkout: `6429a14b49` is named in `$(git rev-parse --git-common-dir)/shallow`,
 # `git show --stat 6429a14b49` reports 3787 files / 2,182,456 insertions (the
-# whole repo), and the SHALLOW readings are `6429a14b49` and exit 1. That is the
-# graft, not a creation — do not write those two outputs into this comment a
+# whole repo), and the two commands above return `6429a14b49` and exit 1. That is
+# the graft, not a creation — do not write those two outputs into this comment a
 # fourth time.
 #
 # The other wrong reading: `#12313` did not create the file (it appended the
