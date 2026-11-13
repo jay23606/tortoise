@@ -58,6 +58,18 @@ aboutObjects: ONTOLOGY.md, canonical ontology, model versions
 > The file names no PR, issue or build status; a reference to when something was decided, fixed or landed
 > is history and lives here. The `Convention` line loses its `(v3.6, #909)` version-and-ticket tail for
 > the same reason.
+>
+> **The one thing in the old paragraph that was neither a model statement nor history, and where it went.**
+> §4.1 also carried a live residual, explicitly labelled *"recorded so no one 'tidies' it away"*: the
+> draft→live promote arm on `update_point` does not read the legacy `outdated` flag, so a point that is
+> flag-dead (`outdated=true`) with a NULL status can still be given `status='live'`, and the flag keeps it
+> terminal for readers. Re-measured at this change: `update_point(<flag-dead, status NULL>, status='live')`
+> is still ACCEPTED and lands `['live', outdated=true]`; `_update_entity` refuses the same shape. So the
+> residual is a **code lag against the model, not a property of the model** — §4.1 now states the
+> constraint (`terminality is one predicate; a claim dead by either signal is refused`), and the gap
+> between statement and code is a work item, which is this changelog's job and not the file's. The two
+> comments in `tortoise/sdk.py` (`_update_entity`) that cited *"the #2498 residual ONTOLOGY §5 records"*
+> are corrected to cite this entry, so no reader is sent to §5 for a fact §5 no longer carries.
 
 ---
 
