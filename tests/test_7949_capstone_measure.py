@@ -5287,13 +5287,22 @@ def test_the_epic_bundle_cites_the_branch_rederived_resolve():
         # `core:` block inserted at 2237 and a 1-line `tier1:` one at 9150).
         # THIS branch adds no `ci-surfaces.yml` registration at all, so the
         # merged entry is `main`'s own and moves only with it: +32 at
-        # `ea2c41a696` (#11825's block at 7535), +1 at `a53ba8cf53` (#12404,
+        # `ea2c41a696` (#11825's block at 7535), +1 at `a53ba8cf53` (#12406,
         # line 1039) and +1 at `73c479ce40` (#12408, line 2237), which is the
         # 10021 measured at `main` `87c07462`. `carve_out:` opens 9895 and
-        # `uri_requiring:` 10226, so 10021 is inside the section. The
-        # identical text also sits at 6105 and 8536, which is what the 5th
+        # `uri_requiring:` 10226 THERE, so 10021 is inside the section. The
+        # identical text also sits at 6105 and 8536 THERE, which is what the 5th
         # element exists to refuse; the pair shows the two cases over
-        # `9828250732`'s 6082 / 8459. Each insertion below is attributed to the
+        # `9828250732`'s 6082 / 8459. ⛔ `main` has moved EIGHT times since, and
+        # every number in this paragraph moved with it — MEASURED per commit as
+        # (first twin / sdk twin / entry): `42409813a7` +1/+1/+1, `6261c23a4b`
+        # +19/+19/+19, `276503dad1` 0/+8/+13, `ca74f2375e` 0/+22/+22,
+        # `b85194d6bc` +16/+16/+18, `0561bdcd80` +21/+21/+22, `6408da01ce`
+        # +16/+16/+16 and `3c4d72a9a7` +15/+15/+15 → twins 6193 / 8654 and entry
+        # 10147 at `main` `2dbfb046d7`, with `core:` 2256 and `sdk:` 8420. Two
+        # of those commits move the sdk twin and the entry but NOT the first
+        # twin, which is why the arithmetic below cannot be carried forward.
+        # Each insertion below is attributed to the
         # LANDING COMMIT that made it (measured with `git diff -U0 <a> <b> --
         # config/ci-surfaces.yml`), and its position is where that commit put it:
         #   +8  @2725  `cd22562c24` (#12060)   → above BOTH twins
@@ -5302,7 +5311,7 @@ def test_the_epic_bundle_cites_the_branch_rederived_resolve():
         #  +13  @2237  `f1f74135a15b` (#12302, #12294's name-entropy gate) → above BOTH
         #   +1  @9150  `f1f74135a15b`           → BELOW both twins; it moves neither
         #  +32  @7535  `ea2c41a696` (#11825)   → above the entry, BELOW the first twin
-        #   +1  @1039  `a53ba8cf53` (#12404)   → above BOTH twins and the entry
+        #   +1  @1039  `a53ba8cf53` (#12406)   → above BOTH twins and the entry
         #   +1  @2237  `73c479ce40` (#12408)   → above BOTH twins and the entry
         # ⚠️ Both `f1f74135a15b` rows are read at the main tip `abf186f1109a`, which
         # carries them but made NEITHER: `git show --stat abf186f1109a --
@@ -5310,13 +5319,14 @@ def test_the_epic_bundle_cites_the_branch_rederived_resolve():
         # `cd22562c24e4..abf186f1109a` that touches this file. A row naming the span
         # END rather than the commit would be the same defect one level down: the
         # number is true and the reader who checks `git show` learns nothing.
-        # ⛔ So the FIRST twin reads 6105 = 6082 + 8 + 13 + 1 + 1 (only the
-        # insertions ABOVE it count, which is why the two twins do not move
-        # together), and the sdk twin reads 8536 = 8459 + 8 + 6 + 16 + 13 + 32
-        # + 1 + 1.
+        # ⛔ At `87c07462` the FIRST twin read 6105 = 6082 + 8 + 13 + 1 + 1 (only
+        # the insertions ABOVE it count, which is why the two twins do not move
+        # together), and the sdk twin 8536 = 8459 + 8 + 6 + 16 + 13 + 32 + 1 + 1.
+        # The eight later commits above move the pair by +88 and +118, to the
+        # 6193 / 8654 this tree reads — re-measured, never carried.
         # ⚠️ Both of those are INDENTED sub-keys
-        # (`core:` 2236, `sdk:` 8302) of `surfaces:`, so the resolver's
-        # nearest-column-zero-key rule reports the PARENT: a cite onto 8536 refuses
+        # (`core:` 2256, `sdk:` 8420) of `surfaces:`, so the resolver's
+        # nearest-column-zero-key rule reports the PARENT: a cite onto 8654 refuses
         # with `sits in section 'surfaces:', not 'carve_out:'` — measured, so a
         # re-derivation onto it does not get told `sdk:` and conclude the guard is
         # broken.
@@ -5363,14 +5373,15 @@ def test_the_epic_bundle_cites_the_branch_rederived_resolve():
             # `cd22562c24e4`, 9987 at `f1f74135a1`, 10019 at `ea2c41a696` (+32),
             # 10020 at `a53ba8cf53` (+1), 10021 at `73c479ce40` (+1) — the tip
             # `main` carried when this row was FIRST re-derived (`87c07462`).
-            # `main` has moved seven times since, and the entry with it:
+            # `main` has moved eight times since, and the entry with it:
             # `42409813a7` (+1) -> 10022, then +54 across `6261c23a4b` (+19)
             # -> 10041, `276503dad1` (+13) -> 10054 and `ca74f2375e` (+22)
             # -> 10076. ⛔ The 54 is a SPAN, not that tip commit: `git show
             # ca74f2375e` inserts 23 lines, only 22 above the entry, so it is
             # not the 54. Then
             # `b85194d6bc` (+18) -> 10094, `0561bdcd80` (+22) -> 10116 and
-            # `6408da01ce` (+16) -> 10132, which is THIS merge tree's value.
+            # `6408da01ce` (+16) -> 10132, then `3c4d72a9a7` (+15) -> 10147, which is
+            # THIS merge tree's value (`main` `2dbfb046d7`).
             # ⚠️ Deltas are what each commit did to the ENTRY, not its net
             # `git diff --numstat` for the file: an insertion landing BELOW the
             # entry adds to the file and moves the entry by nothing, so the two
@@ -5380,9 +5391,9 @@ def test_the_epic_bundle_cites_the_branch_rederived_resolve():
             # (9943 + 8 predicted) named no commit at all, and how the
             # `10005`/`10019` pair described a side branch's own tree and its
             # merge tree rather than a value on `main`.
-            # `carve_out:` opens 10006 and `uri_requiring:` 10337 on this tree,
-            # so 10132 is inside the section.
-            ("10132", "- test_pack_logic_writeprobe_11083.py"),
+            # `carve_out:` opens 10021 and `uri_requiring:` 10352 on this tree,
+            # so 10147 is inside the section.
+            ("10147", "- test_pack_logic_writeprobe_11083.py"),
         ), "ci_surfaces", "carve_out:"),
     )
     assert len(rows) >= 9, (
