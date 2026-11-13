@@ -3104,11 +3104,18 @@ _READ_CALLS = frozenset({"open", "read_text", "read_bytes", "read",
 # `git ls-files`.
 _NON_CODE_DOC_ROOTS = ("tests", "tools", "scripts", ".github", "tortoise")
 
-#: `_NON_CODE_DOC_ROOTS` spelled out a SECOND time, ON PURPOSE, for the census's
-#: non-vacuity test. An expectation derived from the tuple shrinks with it, so
-#: dropping a root would keep that test green (measured); this pin reds instead,
-#: and requires whoever edits either side to say what reads the reprieved docs
-#: from that root.
+#: `_NON_CODE_DOC_ROOTS` spelled out a THIRD time, ON PURPOSE, for the census's
+#: non-vacuity test — the mention census's `_CENSUS_ROOTS` above is the second,
+#: and the test binds all three. An expectation derived from the tuple shrinks
+#: with it, so dropping a root would keep that test green (measured); a literal
+#: reds instead, and forces whoever edits either side to say what reads the
+#: reprieved docs from that root.
+#:
+#: ⚠️ SCOPE, stated rather than overclaimed: this is a review PROMPT, not an
+#: enforced re-derivation. A SYNCHRONISED edit of the literals is GREEN
+#: (measured) — the assertions can only red an edit that forgets one of them.
+#: What they do pin is the MECHANISM: a reader under every declared root, in
+#: both file kinds, must come back, so a walk that stopped seeing readers reds.
 _CENSUS_ROOTS_PINNED = ("tests", "tools", "scripts", ".github", "tortoise")
 
 # A shell read operation. `read\b` deliberately does NOT match "reads" (word
@@ -3303,15 +3310,20 @@ def test_the_content_census_sees_a_reader_end_to_end(tmp_path, monkeypatch):
     reader pins the walk's shell branch (`_content_read_in_shell` was otherwise
     only exercised as a leaf).
 
-    Mutation checks (all measured): empty `_NON_CODE_DOC_ROOTS` -> RED; drop one
-    root -> RED (pin and walk); drop `.sh` from the walk's suffix filter -> RED
-    (the `.sh` reader is never seen). The `REPO` this test sets cannot be
-    overridden from outside, so pointing `REPO` elsewhere is NOT a mutation.
+    Mutation checks (MEASURED, each reverted): `_NON_CODE_DOC_ROOTS` emptied ->
+    RED; one root dropped from the CODE list only -> RED (the pin fires); `.sh`
+    dropped from the walk's suffix filter -> RED (the `.sh` reader is never
+    seen). A synchronised edit of all three literals is GREEN — see the pin's
+    SCOPE note; that is the residual, not a hidden one. The `REPO` this test sets
+    cannot be overridden from outside, so pointing `REPO` elsewhere is NOT a
+    mutation.
     """
-    assert _NON_CODE_DOC_ROOTS == _CENSUS_ROOTS_PINNED, (
-        "the census's root list changed — re-derive what reads the reprieved docs "
-        "from that root before changing the pin, or a doc whose only reader lives "
-        "there is reprieved silently (the #1349/#3332/#3616 class)")
+    assert (tuple(r.rstrip("/") for r in _CENSUS_ROOTS)
+            == _NON_CODE_DOC_ROOTS == _CENSUS_ROOTS_PINNED), (
+        "the three root lists have diverged — the mention census (`_readers_of`, "
+        "`_CENSUS_ROOTS`) and the content census (`_content_readers_of`, "
+        "`_NON_CODE_DOC_ROOTS`) must cover the SAME roots, or one of them is "
+        "silently narrower than the other two (#1349/#3332/#3616)")
     py_reader = ('from pathlib import Path\n'
                  'Path("CHANGELOG.md").read_text(encoding="utf-8")\n')
     for root in _CENSUS_ROOTS_PINNED:
