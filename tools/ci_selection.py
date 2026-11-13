@@ -3505,23 +3505,38 @@ def _is_safe_root_file(path: str) -> bool:
 # `main` by `#3966`, `79c3d9dbe`) — which READS the doc
 # (`(sm.ROOT / "CONTRIBUTING.md").read_text(...)`) and asserts on its
 # "**To REMOVE a symbol**" paragraph. ⛔ THREE creation numbers have now been
-# written into this sentence and TWO of them were wrong, so state the
-# measurement WITH the command: on `main`,
-# `git log origin/main --diff-filter=A -- tests/test_surface_manifest.py`
-# returns EXACTLY `79c3d9dbe` (`#3966`); the path has no `--diff-filter=D` commit
-# at all, so it was never deleted and re-created; and
-# `git merge-base --is-ancestor 79c3d9dbe origin/main` is TRUE. The two wrong
-# readings, so neither is inherited a fourth time: `#12313` did not create the
-# file (it appended the reader — the original error), and `#9638`
-# (`6429a14b49`) is an unrelated `#9555` commit that never touches this path —
-# it shows up as "the add" only in a clone whose object DB is incomplete, where
-# a path-limited `--diff-filter=A` can report a later commit as the add (this
-# checkout prints `exists in commit-graph but not in the object database` for
-# other commits, which is that shape). Cross-check against the server, which is
-# authoritative:
-# `gh api "repos/daniel-ospina/tortoise/commits?path=tests/test_surface_manifest.py&sha=main"`
-# lists `79c3d9dbe` as the OLDEST of the 30 commits on that path. Re-derive
-# before re-admitting the entry; do not inherit a number from this comment.
+# written into this sentence and TWO of them were wrong, so LEAD WITH THE SERVER,
+# which is authoritative, and treat the local commands as conditional:
+#
+#   gh api "repos/daniel-ospina/tortoise/commits?path=tests/test_surface_manifest.py&sha=main&per_page=100"
+#     → the FULL path history (30 commits — never trust the default page size,
+#       which happens to equal it today) and `79c3d9dbe` (`#3966`) is the OLDEST.
+#   gh api repos/daniel-ospina/tortoise/commits/79c3d9dbe
+#     → its file list carries this path with status `added`.
+#   gh api "repos/daniel-ospina/tortoise/compare/main...79c3d9dbe"
+#     → `status=behind`, `merge_base=79c3d9dbe` → it IS an ancestor of `main`.
+#   gh api repos/daniel-ospina/tortoise/commits/6429a14b49
+#     → its file list does NOT contain this path.
+#
+# ⛔ ONLY ON A COMPLETE CLONE do these reproduce locally, and THIS CHECKOUT OFTEN
+# IS NOT ONE — it is SHALLOW:
+#
+#   git log origin/main --diff-filter=A -- tests/test_surface_manifest.py  → `79c3d9dbe`
+#   git merge-base --is-ancestor 79c3d9dbe origin/main                     → exit 0
+#
+# `git fetch --unshallow` first, or do not run them at all. A graft boundary has
+# no local parent, so git diffs it against the EMPTY TREE: it is reported as an
+# addition, and every ancestry test for a commit OLDER than the boundary returns
+# a false negative. Measured on the checkout that produced the previous wrong
+# number — `6429a14b49` is named in `$(git rev-parse --git-common-dir)/shallow`,
+# `git show --stat 6429a14b49` reports 3787 files / 2,182,456 insertions (the
+# whole repo), and the SHALLOW readings are `6429a14b49` and exit 1. That is the
+# graft, not a creation — do not write those two outputs into this comment a
+# fourth time.
+#
+# The other wrong reading: `#12313` did not create the file (it appended the
+# reader — the original error). Re-derive before re-admitting the entry; do not
+# inherit a number from this comment.
 #
 # By this set's OWN membership rule the entry
 # had to go, and leaving it reprieved is a fail-open: an edit to `CONTRIBUTING.md`
