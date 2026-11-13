@@ -3305,10 +3305,14 @@ def test_the_content_census_sees_a_reader_end_to_end(tmp_path, monkeypatch):
     That is not hypothetical on CI, where `scripts/` is absent by design (it is a
     machine-local symlink, #9475), so the walk is permanently narrower there.
 
-    ⛔ The expectation is built from a LITERAL pin, never from
-    `_NON_CODE_DOC_ROOTS` — an expectation derived from the tuple shrinks with
-    it, so dropping a root would leave the test green (measured: with the
-    expectation derived, `_NON_CODE_DOC_ROOTS = ("tests",)` passes). A root is
+    ⛔ The expectation is built from a LITERAL pin rather than from
+    `_NON_CODE_DOC_ROOTS`, as DEFENCE IN DEPTH — not as a live detector. The bind
+    below already forces the two to be equal for every input that reaches this
+    assertion, so a shrunk tuple cannot arrive here with a matching expectation.
+    (Before the bind and the trailing-slash pin landed, deriving the expectation
+    DID leave this green over a shrunk tuple — measured then; at this head the
+    same edit REDs at the bind when applied to one list and at the pin when
+    applied to all three, so do not re-measure it as GREEN.) A root is
     therefore load-bearing in three ways: the pin reds on any edit that changes a
     root NAME in one list, a synthetic reader under EVERY pinned root must come
     back, and a `.sh` reader pins the walk's shell branch
