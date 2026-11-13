@@ -3013,10 +3013,11 @@ def test_root_file_read_by_a_test_is_never_allowlisted():
     doc's edit must keep the FULL matrix or that guard is skipped on the only PR
     that needs it (`#12443`). Every name below IS read
     (README.md by `test_embedded_durability_claim.py:62`; AGENTS.md by the
-    base-subset pin; `.gitignore` by `test_kind_index.py:290`; …) and keeps FULL.
+    base-subset pin; `.gitignore` by `test_kind_index.py:290`; CONTRIBUTING.md by
+    `test_surface_manifest.py`'s removal-docs pin; …) and keeps FULL.
     """
     for name in ("README.md", "AGENTS.md",
-                 "LICENSE", "MEMORY.md", "index.md",
+                 "LICENSE", "MEMORY.md", "index.md", "CONTRIBUTING.md",
                  ".gitignore", ".env.example", "fly.toml", "pyproject.toml",
                  ".python-version"):
         r = _sel([name])
@@ -3288,8 +3289,10 @@ def test_the_content_census_sees_a_reader_end_to_end(tmp_path, monkeypatch):
 
     This drives the whole path — walk, read, detect — against a synthetic tree,
     so the only thing that can make it pass is an enumeration that really finds a
-    reader. Mutation check: empty `_NON_CODE_DOC_ROOTS` (or point `REPO` at a
-    tree with no `tests/`) and this goes RED while every sibling stays green.
+    reader. Mutation check: empty `_NON_CODE_DOC_ROOTS` and this goes RED while
+    every sibling stays green (the fix lives here, not in the checkout, so the
+    `REPO` this test sets cannot be overridden from outside — pointing `REPO`
+    elsewhere is NOT a mutation of this test).
     """
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_reads_doc.py").write_text(
