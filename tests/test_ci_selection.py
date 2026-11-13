@@ -3240,24 +3240,24 @@ def test_non_code_doc_paths_have_no_content_reader():
         f"smoke would skip those guards on the PR that edits the file: {offenders}")
 
 
-def test_the_content_census_can_see_a_reader():
-    """NON-VACUITY for the census above (#12448 review, P2).
+def test_the_content_census_leaf_detectors_see_a_reader():
+    """The two LEAF detectors actually detect (#12448 review, P2).
 
     `test_non_code_doc_paths_have_no_content_reader` asserts `assert not
     offenders` over every member — and after #12443 removed `CONTRIBUTING.md`
     every remaining member answers `[]` (measured: `.github/
-    pull_request_template.md`, `CHANGELOG.md`, `CLAUDE.md`). A DETECTOR that
-    returned `[]` for everything would therefore leave that ratchet green
-    forever: rename a `_READ_CALLS` entry, change the AST shape it matches, or
-    let the `_NON_CODE_DOC_ROOTS` walk skip an absent root — the last one the
-    census's own docstring warns about — and the guard protects nothing while
-    reporting clean. The sibling `test_no_allowlisted_root_file_has_a_reader`
-    cannot cover it: it derives readers with `_readers_of`, the GREP-based
-    MENTION census, so a broken content-read detector is invisible to it.
+    pull_request_template.md`, `CHANGELOG.md`, `CLAUDE.md`). So a DETECTOR that
+    answered "no" for everything would leave that ratchet green forever: rename a
+    `_READ_CALLS` entry, or change the AST shape it matches, and the guard
+    protects nothing while reporting clean. The sibling
+    `test_no_allowlisted_root_file_has_a_reader` cannot cover it — it derives
+    readers with `_readers_of`, the GREP-based MENTION census, a different
+    function.
 
-    This pins one positive and one negative per detector, so the census cannot
-    pass by seeing nothing. It is not a claim about the walk's coverage — that
-    limitation is stated in `_content_readers_of`'s own SCOPE note.
+    This pins the leaves, one positive and one negative each (`read_text` and a
+    bare mention in Python; a read op and a non-read `echo` in shell). It does
+    NOT cover the ENUMERATION — that is the end-to-end test below, and it is
+    the half that was missing when this was first written.
     """
     assert _content_read_in_py(
         'c = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")\n',
@@ -3269,6 +3269,39 @@ def test_the_content_census_can_see_a_reader():
     assert _content_read_in_shell(
         "cat CONTRIBUTING.md\n", "CONTRIBUTING.md",
     ), "a shell read op must be SEEN"
+    assert not _content_read_in_shell(
+        "echo CONTRIBUTING.md is generated\n", "CONTRIBUTING.md",
+    ), "naming a file in a shell line is not reading it"
+
+
+def test_the_content_census_sees_a_reader_end_to_end(tmp_path, monkeypatch):
+    """The ENUMERATION sees a reader, not only the leaves (#12448 review, P1).
+
+    Right leaves do not make a right census: `_content_readers_of` walks
+    `_NON_CODE_DOC_ROOTS` and `continue`s SILENTLY on a root that is not a
+    directory, so a census that saw nothing at all would still satisfy
+    `test_non_code_doc_paths_have_no_content_reader` — and, before this test,
+    satisfied the leaf test above too. MEASURED: with `_NON_CODE_DOC_ROOTS`
+    emptied, every member answers `[]` and the leaf assertions are unaffected.
+    That is not hypothetical on CI, where `scripts/` is absent by design (it is a
+    machine-local symlink, #9475), so the walk is permanently narrower there.
+
+    This drives the whole path — walk, read, detect — against a synthetic tree,
+    so the only thing that can make it pass is an enumeration that really finds a
+    reader. Mutation check: empty `_NON_CODE_DOC_ROOTS` (or point `REPO` at a
+    tree with no `tests/`) and this goes RED while every sibling stays green.
+    """
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_reads_doc.py").write_text(
+        'from pathlib import Path\n'
+        'Path("CHANGELOG.md").read_text(encoding="utf-8")\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys.modules[__name__], "REPO", tmp_path)
+    assert _content_readers_of("CHANGELOG.md") == ["tests/test_reads_doc.py"], (
+        "the content census cannot SEE a reader end to end — every member would "
+        "answer [] and test_non_code_doc_paths_have_no_content_reader would stay "
+        "green over a silently-skipped root")
 
 
 def test_non_code_docs_select_tier1_not_full(monkeypatch):
@@ -3343,9 +3376,9 @@ def test_doc_reprieve_is_per_path_not_per_diff():
     assert r["full"] is False
     assert "api" in r["surfaces"] and "core" in r["surfaces"]
 
-    # The measured #8726 shape: two prose files, no Python -> tier-1 smoke.
-    # (The doc is `CHANGELOG.md`, not `CONTRIBUTING.md`: the latter is no longer
-    # reprieved — a test reads its content, so it keeps the FULL matrix, #12443.)
+    # The #8726 SHAPE (its own pair was `CONTRIBUTING.md` + the template, which
+    # now selects FULL because a test reads `CONTRIBUTING.md` — #12443), carried
+    # here with `CHANGELOG.md` standing in: two prose files, no Python -> tier-1.
     r2 = _sel(["CHANGELOG.md", ".github/pull_request_template.md"])
     assert r2["full"] is False and r2["surfaces"] == []
     assert r2["slow_run"] is False and r2["carve_out_run"] is False
