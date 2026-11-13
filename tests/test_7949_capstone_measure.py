@@ -5363,7 +5363,7 @@ def test_the_epic_bundle_cites_the_branch_rederived_resolve():
             # `cd22562c24e4`, 9987 at `f1f74135a1`, 10019 at `ea2c41a696` (+32),
             # 10020 at `a53ba8cf53` (+1), 10021 at `73c479ce40` (+1) — the tip
             # `main` carried when this row was FIRST re-derived (`87c07462`).
-            # `main` has moved six times since, and the entry with it:
+            # `main` has moved seven times since, and the entry with it:
             # `42409813a7` (+1) -> 10022, then +54 across `6261c23a4b` (+19)
             # -> 10041, `276503dad1` (+13) -> 10054 and `ca74f2375e` (+22)
             # -> 10076. ⛔ The 54 is a SPAN, not that tip commit: `git show
