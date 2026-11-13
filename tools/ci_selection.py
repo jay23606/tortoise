@@ -3490,10 +3490,25 @@ def _is_safe_root_file(path: str) -> bool:
 # READS stays out. `README.md` (tests/test_embedded_durability_claim.py:62,
 # tests/test_capacity_page.py:40), `AGENTS.md` (the base-subset pin),
 # `.gitignore` (tests/test_kind_index.py:290) and `.env.example` are therefore
-# NOT here. `CONTRIBUTING.md` was left out of #6786's two-file reprieve on a
-# MENTION census ("the surface tooling"); re-derived here, every mention is a
-# docstring, a generated-doc link, or `scripts/record-review.sh`'s basename case
-# — no test or tool reads its CONTENT, so the mention was not a reader.
+# NOT here. `README.md` (tests/test_embedded_durability_claim.py:62,
+# tests/test_capacity_page.py:40), `AGENTS.md` (the base-subset pin),
+# `.gitignore` (tests/test_kind_index.py:290) and `.env.example` are therefore
+# NOT here.
+#
+# ⛔ `CONTRIBUTING.md` IS NO LONGER HERE, and the reason it once was is worth
+# keeping. It was left out of #6786's two-file reprieve on a MENTION census
+# ("the surface tooling") and admitted here on a re-derived one: every mention
+# was a docstring, a generated-doc link, or `scripts/record-review.sh`'s basename
+# case, so — at that head — no test or tool read its CONTENT. That census was
+# correct then and is FALSE now: `#12313` (`45cebfc5df`) added
+# `tests/test_surface_manifest.py`, which READS the file
+# (`(sm.ROOT / "CONTRIBUTING.md").read_text(...)`) and asserts on its
+# "**To REMOVE a symbol**" paragraph. By this set's OWN membership rule the entry
+# had to go, and leaving it reprieved is a fail-open: an edit to `CONTRIBUTING.md`
+# would select the tier-1 smoke and SKIP the guard that reads it, on the very PR
+# that edits the doc. `main` was red from `45cebfc5df` until this was removed
+# (`#12443`). Re-derive the reader census before re-admitting it; do not
+# re-admit it on the older mention census, which is what produced the red.
 #
 # Ratchets: `test_non_code_doc_paths_exist` (liveness) and
 # `test_non_code_doc_paths_have_no_content_reader` (the read census).
@@ -3501,7 +3516,6 @@ NON_CODE_DOC_PATHS = frozenset({
     ".github/pull_request_template.md",
     "CHANGELOG.md",
     "CLAUDE.md",
-    "CONTRIBUTING.md",
 })
 
 
