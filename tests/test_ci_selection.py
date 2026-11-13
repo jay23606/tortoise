@@ -3104,6 +3104,13 @@ _READ_CALLS = frozenset({"open", "read_text", "read_bytes", "read",
 # `git ls-files`.
 _NON_CODE_DOC_ROOTS = ("tests", "tools", "scripts", ".github", "tortoise")
 
+#: `_NON_CODE_DOC_ROOTS` spelled out a SECOND time, ON PURPOSE, for the census's
+#: non-vacuity test. An expectation derived from the tuple shrinks with it, so
+#: dropping a root would keep that test green (measured); this pin reds instead,
+#: and requires whoever edits either side to say what reads the reprieved docs
+#: from that root.
+_CENSUS_ROOTS_PINNED = ("tests", "tools", "scripts", ".github", "tortoise")
+
 # A shell read operation. `read\b` deliberately does NOT match "reads" (word
 # boundary), so prose like "pi's loader reads AGENTS.md" is not a read op.
 _SHELL_READ_RE = re.compile(r"(?:^|[^\w])(?:cat|grep|egrep|rg|source|read)\b|<")
@@ -3276,7 +3283,7 @@ def test_the_content_census_leaf_detectors_see_a_reader():
 
 
 def test_the_content_census_sees_a_reader_end_to_end(tmp_path, monkeypatch):
-    """The ENUMERATION sees a reader, not only the leaves (#12448 review, P1).
+    """The ENUMERATION sees a reader, on EVERY root and in BOTH file kinds.
 
     Right leaves do not make a right census: `_content_readers_of` walks
     `_NON_CODE_DOC_ROOTS` and `continue`s SILENTLY on a root that is not a
@@ -3287,24 +3294,40 @@ def test_the_content_census_sees_a_reader_end_to_end(tmp_path, monkeypatch):
     That is not hypothetical on CI, where `scripts/` is absent by design (it is a
     machine-local symlink, #9475), so the walk is permanently narrower there.
 
-    This drives the whole path — walk, read, detect — against a synthetic tree,
-    so the only thing that can make it pass is an enumeration that really finds a
-    reader. Mutation check: empty `_NON_CODE_DOC_ROOTS` and this goes RED while
-    every sibling stays green (the fix lives here, not in the checkout, so the
-    `REPO` this test sets cannot be overridden from outside — pointing `REPO`
-    elsewhere is NOT a mutation of this test).
+    ⛔ The expectation is built from a LITERAL pin, never from
+    `_NON_CODE_DOC_ROOTS` — an expectation derived from the tuple shrinks with
+    it, so dropping a root would leave the test green (measured: with the
+    expectation derived, `_NON_CODE_DOC_ROOTS = ("tests",)` passes). A root is
+    therefore load-bearing in three ways: the pin reds on any edit to the tuple,
+    a synthetic reader under EVERY pinned root must come back, and a `.sh`
+    reader pins the walk's shell branch (`_content_read_in_shell` was otherwise
+    only exercised as a leaf).
+
+    Mutation checks (all measured): empty `_NON_CODE_DOC_ROOTS` -> RED; drop one
+    root -> RED (pin and walk); drop `.sh` from the walk's suffix filter -> RED
+    (the `.sh` reader is never seen). The `REPO` this test sets cannot be
+    overridden from outside, so pointing `REPO` elsewhere is NOT a mutation.
     """
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "test_reads_doc.py").write_text(
-        'from pathlib import Path\n'
-        'Path("CHANGELOG.md").read_text(encoding="utf-8")\n',
-        encoding="utf-8",
-    )
+    assert _NON_CODE_DOC_ROOTS == _CENSUS_ROOTS_PINNED, (
+        "the census's root list changed — re-derive what reads the reprieved docs "
+        "from that root before changing the pin, or a doc whose only reader lives "
+        "there is reprieved silently (the #1349/#3332/#3616 class)")
+    py_reader = ('from pathlib import Path\n'
+                 'Path("CHANGELOG.md").read_text(encoding="utf-8")\n')
+    for root in _CENSUS_ROOTS_PINNED:
+        base = tmp_path / root
+        base.mkdir(parents=True, exist_ok=True)
+        (base / "read_doc.py").write_text(py_reader, encoding="utf-8")
+    (tmp_path / "tests" / "read_doc.sh").write_text(
+        "cat CHANGELOG.md\n", encoding="utf-8")
     monkeypatch.setattr(sys.modules[__name__], "REPO", tmp_path)
-    assert _content_readers_of("CHANGELOG.md") == ["tests/test_reads_doc.py"], (
-        "the content census cannot SEE a reader end to end — every member would "
-        "answer [] and test_non_code_doc_paths_have_no_content_reader would stay "
-        "green over a silently-skipped root")
+    expected = sorted([f"{root}/read_doc.py" for root in _CENSUS_ROOTS_PINNED]
+                      + ["tests/read_doc.sh"])
+    assert _content_readers_of("CHANGELOG.md") == expected, (
+        "the content census cannot SEE a reader end to end — a pinned root is "
+        "walked but yields no reader, so every member would answer [] and "
+        "test_non_code_doc_paths_have_no_content_reader would stay green over a "
+        "silently-skipped root")
 
 
 def test_non_code_docs_select_tier1_not_full(monkeypatch):
