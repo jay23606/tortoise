@@ -3500,8 +3500,9 @@ def _is_safe_root_file(path: str) -> bool:
 # ("the surface tooling") and admitted here on a re-derived one: every mention
 # was a docstring, a generated-doc link, or `scripts/record-review.sh`'s basename
 # case, so — at that head — no test or tool read its CONTENT. That census was
-# correct then and is FALSE now: `#12313` (`45cebfc5df`) added
-# `tests/test_surface_manifest.py`, which READS the file
+# correct then and is FALSE now: `#12313` (`45cebfc5df`) added the reader IN
+# `tests/test_surface_manifest.py` — a suite that already existed (created by
+# `#9638`), not a file `#12313` created — which READS the doc
 # (`(sm.ROOT / "CONTRIBUTING.md").read_text(...)`) and asserts on its
 # "**To REMOVE a symbol**" paragraph. By this set's OWN membership rule the entry
 # had to go, and leaving it reprieved is a fail-open: an edit to `CONTRIBUTING.md`

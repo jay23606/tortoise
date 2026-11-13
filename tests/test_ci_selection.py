@@ -3008,7 +3008,8 @@ def test_root_file_read_by_a_test_is_never_allowlisted():
     `NON_CODE_DOC_PATHS` — pinned by
     `test_non_code_doc_paths_have_no_content_reader`. ⛔ `CONTRIBUTING.md` was in
     that group too, on a MENTION census, and it is NOT any more: `#12313` added
-    `tests/test_surface_manifest.py`, which reads the file's content, so the
+    the reader IN `tests/test_surface_manifest.py` (a suite that already existed;
+    `#12313` did not create it), which reads the file's content, so the
     doc's edit must keep the FULL matrix or that guard is skipped on the only PR
     that needs it (`#12443`). Every name below IS read
     (README.md by `test_embedded_durability_claim.py:62`; AGENTS.md by the
