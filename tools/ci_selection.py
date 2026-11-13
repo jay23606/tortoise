@@ -3501,10 +3501,24 @@ def _is_safe_root_file(path: str) -> bool:
 # was a docstring, a generated-doc link, or `scripts/record-review.sh`'s basename
 # case, so — at that head — no test or tool read its CONTENT. That census was
 # correct then and is FALSE now: `#12313` (`45cebfc5df`) added the reader IN
-# `tests/test_surface_manifest.py` — a suite that already existed (created by
-# `#3966`, `79c3d9dbe`), not a file `#12313` created — which READS the doc
+# `tests/test_surface_manifest.py` — a suite that already existed (created on
+# `main` by `#9638`, `6429a14b49`) — which READS the doc
 # (`(sm.ROOT / "CONTRIBUTING.md").read_text(...)`) and asserts on its
-# "**To REMOVE a symbol**" paragraph. By this set's OWN membership rule the entry
+# "**To REMOVE a symbol**" paragraph. ⛔ Two WRONG creation numbers have already
+# been written into this sentence, in opposite directions, so state the
+# measurement with the command: on `main`,
+# `git log --diff-filter=A -- tests/test_surface_manifest.py` returns EXACTLY
+# `6429a14b49` (`#9638`). `#12313` did not create the file (it appended the
+# reader — the original error). `#3966` / `79c3d9dbe` is NOT the answer either:
+# that commit creates a 605-line `tests/test_surface_manifest.py` on a line of
+# history that is NOT reachable from `main` (`git merge-base --is-ancestor
+# 79c3d9dbe origin/main` → false; it is contained by side/backup branches only),
+# and it is what a `--all` reading reports — so cite the `main` answer, not the
+# `--all` one. `git log -S 9638 -- tests/test_surface_manifest.py` being empty
+# proves NOTHING here: the number is in the commit SUBJECT, and `-S` searches
+# added/removed CONTENT. Re-derive with the `--diff-filter=A` command on `main`.
+#
+# By this set's OWN membership rule the entry
 # had to go, and leaving it reprieved is a fail-open: an edit to `CONTRIBUTING.md`
 # would select the tier-1 smoke and SKIP the guard that reads it, on the very PR
 # that edits the doc. `main` was red from `45cebfc5df` until this was removed
