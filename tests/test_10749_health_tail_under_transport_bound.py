@@ -417,13 +417,17 @@ def test_the_hosted_health_body_publishes_the_clamp_counter():
     ``wait_bound_breaches`` is published there explicitly because it is "the surface an operator
     curls FIRST"; the clamp makes that counter go flat by design, so its positive pair must be
     published on the same body or the operator's first curl cannot see the degradation at all.
+
+    ⚠️ Asserted on the BODY, not a source grep: ``inspect.getsource`` is satisfied by a mention (a
+    comment, or the key nested under another block), so that version stayed green if the top-level
+    key the runbook's ``jq '.health_setup_clamped'`` reads were renamed or moved to ``null``. Same
+    shape as ``tests/test_10602_wait_bound_breach_visible.py``, which asserts on the served body.
     """
-    import inspect
+    import asyncio
 
     from tortoise import hosted_api
 
-    source = inspect.getsource(hosted_api.health)
-    assert "health_setup_clamped" in source, (
-        "the hosted /health body does not publish health_setup_clamped, so the one surface an "
-        "operator curls first shows wait_bound_breaches: 0 (flat by design) with no pair"
-    )
+    body = asyncio.run(hosted_api.health())
+
+    assert "health_setup_clamped" in body
+    assert isinstance(body["health_setup_clamped"], int)

@@ -808,31 +808,6 @@ as an absent key — the None-not-zero rule this same body already applies to it
 curl -sS https://api.premiselabs.co/health | jq '.wait_bound_breaches'
 ```
 
-### 4.1.1a The pair that moves when this one goes flat — `health_setup_clamped` (#10749)
-
-**Read both fields together.** `#10749` stopped `tortoise_health` from being *refused* by the
-transport bound: its cold-start allowance is now clamped under the deadline it is served under, so a
-slow probe returns `status: "unknown"` **inside** the bound instead of a `-32009` refusal. That is the
-right behaviour and it makes the counter above go **flat by design** — a clamped probe never breaches
-the bound. Without a pair, a fleet-wide "health is degraded to unknown" would move no counter at all
-(`errors` only covers the `graph_size` arm, and the `mcp_tool_call` telemetry row now reads `ok`).
-
-```bash
-curl -sS https://api.premiselabs.co/health | jq '{breaches: .wait_bound_breaches.total, clamped: .health_setup_clamped}'
-```
-
-- `health_setup_clamped` is cumulative since process start, an `int`, and is **reported, never folded
-  into `status`** — the same rule as the counter above (a cumulative counter must never pin the
-  deployment degraded for the life of the process).
-- ⚠️ **It counts health calls served over MCP, not only degraded ones.** While the seam enforces the
-  bound, `remaining <= 10.0 s`, so the clamped allowance is always below the unclamped 20.0 s and the
-  counter fires on essentially every MCP health call. The discriminating signal is the **per-call**
-  pair in the tool's own report: `setup_timeout_clamped: true` **and** `status: "unknown"`. Use this
-  counter for "the clamp is active on this process", not as a degradation rate.
-- The hosted body carries it because it builds its own JSON (`tortoise/hosted_api.py`'s `health()`);
-  the standalone `/health` and `/metrics` get it from `monitoring.metrics()`'s own key of the same
-  name. A `0` here is a measured zero (an unlabelled counter is exported from registration).
-
 Three properties of this number, because a counter misread as a gauge is its own
 false reassurance:
 
@@ -877,6 +852,34 @@ finding this P0 required an agent to hand-measure six sequential calls. A
 non-zero `total` with a healthy `db.ok` means the store is too slow for the
 bound, not unreachable: the refusal is legible, the work may still complete, and
 the fix is capacity or a narrower query, never a retry loop.
+
+### 4.1.1a The pair that moves when this one goes flat — `health_setup_clamped` (#10749)
+
+**Read both fields together.** `#10749` stopped `tortoise_health` from being *refused* by the
+transport bound: its cold-start allowance is now clamped under the deadline it is served under, so a
+slow probe returns `status: "unknown"` **inside** the bound instead of a `-32009` refusal. That is the
+right behaviour and it makes the counter above go **flat by design** — a clamped probe never breaches
+the bound. Without a pair, a fleet-wide "health is degraded to unknown" would move no counter at all
+(`errors` only covers the `graph_size` arm, and the `mcp_tool_call` telemetry row now reads `ok`).
+
+```bash
+curl -sS https://api.premiselabs.co/health | jq '{breaches: .wait_bound_breaches.total, clamped: .health_setup_clamped}'
+```
+
+- `health_setup_clamped` is cumulative since process start, an `int`, and is **reported, never folded
+  into `status`** — the same rule as the counter above (a cumulative counter must never pin the
+  deployment degraded for the life of the process).
+- ⚠️ **It counts health calls served over MCP, not only degraded ones.** While the seam enforces the
+  bound, `remaining <= 10.0 s`, so the clamped allowance is always below the unclamped 20.0 s and the
+  counter fires on essentially every MCP health call. The discriminating signal is the **per-call**
+  pair in the tool's own report: `setup_timeout_clamped: true` **and** `status: "unknown"`. Use this
+  counter for "the clamp is active on this process", not as a degradation rate.
+- The hosted body carries it because it builds its own JSON (`tortoise/hosted_api.py`'s `health()`);
+  `monitoring.serve_health`'s **`/health`** carries the same key from `monitoring.metrics()`. A `0`
+  here is a measured zero (an unlabelled counter is exported from registration).
+- ⛔ `serve_health`'s **`/metrics`** does **not** carry this JSON key: that endpoint is the Prometheus
+  exposition (`generate_latest`), so the scrapable form is the family
+  `tortoise_health_setup_clamped_total` (see the same warning for `wait_bound_breaches` above).
 
 ### 4.2 Billing mirror drift — verify and repair an under-delivered plan (#8878)
 
