@@ -3476,7 +3476,10 @@ def _is_safe_root_file(path: str) -> bool:
 # this it fell through to the unknown-path branch and reserved the FULL matrix:
 # a one-line `CONTRIBUTING.md` or `.github/pull_request_template.md` edit ran
 # `test (a)…(i)`, `test-carve-out (a)(b)(c)`, `test-slow (a)(b)` and more
-# (measured on PR #8726: 2 files, 0 Python, ~17 test jobs).
+# (measured on PR #8726: 2 files, 0 Python, ~17 test jobs). That cost is now back
+# for `CONTRIBUTING.md` alone — a test reads its content, so it keeps the FULL
+# matrix (`#12443`, see the ⛔ block below); the reprieve still covers the other
+# prose paths.
 #
 # This is the DISTINCTION #8785 asks for: "no surface matched because the file is
 # not code" (drop it -> the tier-1 smoke, as `docs/` already does) versus "no
@@ -3488,9 +3491,6 @@ def _is_safe_root_file(path: str) -> bool:
 #
 # The membership test is the CONTENT-READER census, NOT a mention: a doc a guard
 # READS stays out. `README.md` (tests/test_embedded_durability_claim.py:62,
-# tests/test_capacity_page.py:40), `AGENTS.md` (the base-subset pin),
-# `.gitignore` (tests/test_kind_index.py:290) and `.env.example` are therefore
-# NOT here. `README.md` (tests/test_embedded_durability_claim.py:62,
 # tests/test_capacity_page.py:40), `AGENTS.md` (the base-subset pin),
 # `.gitignore` (tests/test_kind_index.py:290) and `.env.example` are therefore
 # NOT here.
