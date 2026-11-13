@@ -29,12 +29,16 @@ server has not said that extraction did not run.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 
 from tortoise import capture_backlog
 from tortoise.capture_spool import (
+    RECORDED_OUTCOME_VERDICTS,
+    UNRECORDED_OUTCOME_KEY,
+    UNRECORDED_OUTCOME_VALUE,
     PostOutcome,
     Snapshot,
     capture_health_line,
@@ -244,6 +248,87 @@ def test_only_a_closed_verdict_vocabulary_clears_the_marker(tmp_path):
             "evidence — the marker must stand")
 
 
+#: The shape the spool ACTUALLY receives on a routine 2xx, on both legs: the
+#: hosted capture receipt (`hosted_api` POST `/v1/sessions`). It carries neither
+#: `confirmed` nor `extraction_outcome` — that is the whole reason #12460 exists.
+RECEIPT_EXTRACTED_BODY = {"session_id": SESSION, "turns": 2, "extracted": 4,
+                          "points": ["p1", "p2"], "extraction_mode": "llm:openai"}
+RECEIPT_STORE_ONLY_BODY = {"session_id": SESSION, "turns": 2, "extracted": 0,
+                           "points": [],
+                           "extraction_mode": _CAPTURE_NO_PROVIDER_MODE}
+RECEIPT_AMBIGUOUS_BODY = {"session_id": SESSION, "turns": 2, "extracted": 0,
+                          "points": [], "extraction_mode": "llm:openai"}
+
+
+def test_a_receipt_reporting_extracted_points_clears_the_marker(tmp_path):
+    """⛔ THE PRODUCTION SHAPE — the clear on a ROUTINE 2xx.
+
+    A predicate that reads only the synthesised ``confirmed`` vocabulary never
+    fires on a success: the drain's own 2xx body is the capture receipt
+    (``{session_id, turns, extracted, …}``), which has no ``confirmed``. Measuring
+    that in #12460's verification is what turned a green, inert port into a real
+    one — the fake-green class this suite exists to prevent.
+
+    MUTATIONS THAT RED THIS: drop the ``extracted`` clause from
+    ``outcome_recorded`` (the marker then stands over a session the server
+    resolved, until eviction — the permanent false alarm #12460 describes).
+    """
+    write_spool_entry(tmp_path, _snapshot())
+    flush_spool(tmp_path, _post(UNRECORDED_BODY), now=1000.0)
+    assert unrecorded_captures(tmp_path) == [SESSION]
+
+    write_spool_entry(tmp_path, _snapshot(
+        turns=[*TURNS, {"role": "user", "content": "one more turn"}]))
+    resolved = flush_spool(tmp_path, _post(RECEIPT_EXTRACTED_BODY), now=2000.0)
+
+    assert resolved.filed == 1
+    assert unrecorded_captures(tmp_path) == [], (
+        "the receipt reports four extracted points — extraction RAN, so the "
+        "marker is stale and must not outlive the evidence that resolved it")
+
+
+def test_a_store_only_receipt_mode_clears_the_marker(tmp_path):
+    """The other resolved shape off the receipt: ``extraction_mode`` keyless /
+    extraction-disabled is the server SAYING extraction did not run (#4188 /
+    #4258) — a KNOWN negative, not "unknown".
+
+    MUTATIONS THAT RED THIS: require ``extracted >= 1`` unconditionally (a keyless
+    org keeps a false alarm for every session it ever files).
+    """
+    write_spool_entry(tmp_path, _snapshot())
+    flush_spool(tmp_path, _post(UNRECORDED_BODY), now=1000.0)
+    assert unrecorded_captures(tmp_path) == [SESSION]
+
+    write_spool_entry(tmp_path, _snapshot(
+        turns=[*TURNS, {"role": "user", "content": "one more turn"}]))
+    flush_spool(tmp_path, _post(RECEIPT_STORE_ONLY_BODY), now=2000.0)
+
+    assert unrecorded_captures(tmp_path) == []
+
+
+def test_an_AMBIGUOUS_receipt_leaves_the_marker_standing(tmp_path):
+    """⛔ The load-bearing negative: ``extracted: 0`` in a NORMAL mode.
+
+    The capture handler the transport bound abandoned may still be extracting —
+    the server's "no outcome yet" state (#12362's measurement: three captures
+    printed "nothing extracted" and read back holding 7, 2 and 5 points seconds
+    later). Reading a zero as a negative is the #12362 bug wearing the other mask.
+
+    MUTATIONS THAT RED THIS: treat a zero extraction count as resolved (``>= 0``,
+    or "anything that is not pending").
+    """
+    write_spool_entry(tmp_path, _snapshot())
+    flush_spool(tmp_path, _post(UNRECORDED_BODY), now=1000.0)
+
+    write_spool_entry(tmp_path, _snapshot(
+        turns=[*TURNS, {"role": "user", "content": "one more turn"}]))
+    flush_spool(tmp_path, _post(RECEIPT_AMBIGUOUS_BODY), now=2000.0)
+
+    assert unrecorded_captures(tmp_path) == [SESSION], (
+        "a zero extraction count in a normal mode does not say whether the "
+        "outcome was ever recorded — it must never resolve the marker")
+
+
 def test_a_known_store_only_outcome_is_not_counted_as_unrecorded(tmp_path):
     """The #4188 / #4258 direction survives: a keyless capture is a KNOWN
     negative, it keeps its deferral, and it must not be relabelled `unrecorded`.
@@ -433,3 +518,89 @@ def test_the_events_line_is_unchanged_when_nothing_is_unrecorded(tmp_path):
 
     assert summary["unrecorded"] == 0
     assert "unrecorded" not in format_progress(summary)
+
+
+# ── Cross-leg parity: ONE marker, ONE verdict allow-list ────────────────────
+#
+# Both legs write the SAME spool meta (`capture_spool` the Python drain,
+# `tortoise/pi-hooks/tortoise-capture.ts` the Pi filing path). #12460 gave the Pi
+# leg the stamp/clear the Python leg already had, so the two predicates now act
+# on one shared file in two languages — and a divergence would flip the marker
+# against itself depending on which leg filed the growth (the Python leg reading
+# `extraction_outcome`, the Pi leg writing something else; or one leg clearing on
+# a verdict the other refuses). Neither language's behaviour suite can see the
+# other's constants, so the pin lives here: read the TypeScript source and
+# compare it to the Python definitions.
+#
+# These are SOURCE-level assertions. The Pi BEHAVIOUR is pinned by
+# `tortoise/pi-hooks/tortoise-capture.test.ts`'s `#12460` tests, which pytest
+# does not run (they need `node --test`).
+
+PI_SEAM = (Path(__file__).resolve().parent.parent
+           / "tortoise" / "pi-hooks" / "tortoise-capture.ts")
+
+
+def _ts_source() -> str:
+    return PI_SEAM.read_text(encoding="utf-8")
+
+
+def _ts_string_const(name: str) -> str:
+    match = re.search(rf'const {name} = "([^"]+)";', _ts_source())
+    assert match is not None, (
+        f"`{name}` is not declared in {PI_SEAM.name} — the two legs no longer "
+        "share the marker the #12379 trace is keyed on")
+    return match.group(1)
+
+
+def test_the_two_legs_share_one_marker_and_verdict_vocabulary():
+    """The marker key/value and the recorded-verdict closed lists must be
+    IDENTICAL on both legs (and identical to the SDK's own mode constants).
+
+    MUTATIONS THAT RED THIS: rename the key on one leg only (the marker becomes
+    invisible to the other — written by whoever stamped it, read by nobody),
+    change ``unknown`` on one side, add a verdict to the Python allow-list
+    without the Pi CAS clearing on it (then a Pi filing over a resolved session
+    keeps reporting a permanent false alarm), or change a store-only
+    ``extraction_mode`` in `sdk.py` without the Pi receipt clause following it
+    (a keyless capture then reads as unresolved forever on Pi boxes).
+    """
+    from tortoise.capture_spool import STORE_ONLY_EXTRACTION_MODES as _PY_STORE_ONLY
+
+    assert _ts_string_const("UNRECORDED_OUTCOME_KEY") == UNRECORDED_OUTCOME_KEY
+    assert _ts_string_const("UNRECORDED_OUTCOME_VALUE") == UNRECORDED_OUTCOME_VALUE
+
+    ts_list = re.search(r"const RECORDED_OUTCOME_VERDICTS = \[([^\]]*)\] as const;",
+                        _ts_source())
+    assert ts_list is not None, (
+        "the Pi leg declares no `RECORDED_OUTCOME_VERDICTS` allow-list — a "
+        "predicate without a closed vocabulary clears the marker on anything")
+    ts_verdicts = tuple(re.findall(r'"([^"]+)"', ts_list.group(1)))
+
+    assert ts_verdicts == tuple(RECORDED_OUTCOME_VERDICTS), (
+        f"the two legs disagree about which verdicts resolve the state: "
+        f"Pi={ts_verdicts!r} Python={tuple(RECORDED_OUTCOME_VERDICTS)!r}")
+
+    # #12460: the receipt clauses. The Pi leg's ONLY production evidence is the
+    # capture receipt (`extracted` / `extraction_mode`), so those constants have
+    # to name the SDK's own modes — a rename in `sdk.py` would otherwise leave
+    # the Pi clause matching nothing.
+    from tortoise.sdk import (
+        _CAPTURE_EXTRACTION_DISABLED_MODE,
+        _CAPTURE_NO_PROVIDER_MODE,
+    )
+
+    ts_modes = re.search(r"const STORE_ONLY_EXTRACTION_MODES = \[([^\]]*)\] as const;",
+                         _ts_source())
+    assert ts_modes is not None, (
+        "the Pi leg declares no `STORE_ONLY_EXTRACTION_MODES` — a keyless or "
+        "extraction-disabled capture then reads as unresolved on every Pi box")
+    # BOTH sides of the mirror, in one place: the literals `capture_spool` spells
+    # (it deliberately does not import `tortoise.sdk`, which costs ~220 ms on the
+    # `session health` path) and the array the Pi leg spells, each against the SDK
+    # constants they name. Without the first line a Python-only drift (a retyped
+    # or dropped `extraction-disabled`) reds nothing: an extraction-disabled team
+    # then keeps a permanent false alarm on `session health`.
+    assert tuple(_PY_STORE_ONLY) == (
+        _CAPTURE_NO_PROVIDER_MODE, _CAPTURE_EXTRACTION_DISABLED_MODE)
+    assert tuple(re.findall(r'"([^"]+)"', ts_modes.group(1))) == (
+        _CAPTURE_NO_PROVIDER_MODE, _CAPTURE_EXTRACTION_DISABLED_MODE)

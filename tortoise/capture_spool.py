@@ -313,8 +313,25 @@ class PostOutcome:
 
 #: The key a 2xx body (and the spool meta of the entry it filed) uses to say the
 #: server has NOT recorded whether extraction ran. Set by
-#: ``__main__._session_post._refused`` for the ``PENDING`` verdict (#12362) and
-#: copied onto the spool entry by ``_flush_one`` so the state outlives the run.
+#: ``__main__._session_post._refused`` for the ``PENDING`` verdict — the branch
+#: #12374 (unmerged at the time of writing) adds; on a tree without it, the key
+#: has no producer and the trace is INERT, not wrong — and copied onto the spool
+#: entry by ``_flush_one`` so the state outlives the run.
+#:
+#: ⛔ TWO body shapes reach this vocabulary, and conflating them is how the Pi leg's
+#: port went dead (measured in #12460's lane):
+#:   * the synthesised confirmation body — ``{"confirmed": "filed" |
+#:     "unextracted"}`` (plus ``extraction_mode`` for ``UNEXTRACTED``), and on the
+#:     PENDING branch #12374 adds, ``{"confirmed": "pending",
+#:     "extraction_outcome": "unknown"}``. ``_session_post`` builds it for a
+#:     REFUSAL THAT COMMITTED; Python-only, and the Pi hook POSTs to
+#:     ``/v1/sessions`` directly so it never sees this shape;
+#:   * the raw capture receipt (``hosted_api`` POST ``/v1/sessions``:
+#:     ``{session_id, turns, extracted, points, extraction_mode, …}``) — carries
+#:     NEITHER ``confirmed`` nor ``extraction_outcome``, so both legs derive their
+#:     verdict from ``extracted >= 1`` and a store-only ``extraction_mode``
+#:     instead (see ``outcomeRecorded`` in
+#:     ``tortoise/pi-hooks/tortoise-capture.ts``).
 UNRECORDED_OUTCOME_KEY = "extraction_outcome"
 UNRECORDED_OUTCOME_VALUE = "unknown"
 
@@ -350,6 +367,21 @@ def outcome_unrecorded(body) -> bool:
 #: extraction), an absent verdict, a malformed body — leaves the marker alone.
 RECORDED_OUTCOME_VERDICTS = ("filed", "unextracted")
 
+#: The capture-receipt ``extraction_mode`` values that mean the server KNOWS
+#: extraction did not run — a keyless capture (#4188) or a team with extraction
+#: switched off (#4258). The same known-negative shape as ``unextracted`` above,
+#: read straight off the POST receipt.
+#:
+#: ⛔ SPELLED AS LITERALS, not imported from :mod:`tortoise.sdk`, on purpose:
+#: this module is on the `session health` / `session drain` import path and
+#: `tortoise.sdk` costs ~220 ms of import time — a price a pair of string
+#: literals must not carry. The pin that keeps them honest lives in
+#: ``tests/test_12379_unrecorded_trace.py``, which imports the SDK constants and
+#: asserts equality (and pins the Pi leg's ``STORE_ONLY_EXTRACTION_MODES`` mirror
+#: to the same pair), so a rename in `sdk.py` reds a test instead of silently
+#: making the clause match nothing.
+STORE_ONLY_EXTRACTION_MODES = ("no-provider", "extraction-disabled")
+
 
 def outcome_recorded(body) -> bool:
     """True when a 2xx body PROVES the server recorded how the capture ended.
@@ -359,12 +391,44 @@ def outcome_recorded(body) -> bool:
     uninformative body (``replayed``, a bare 2xx, a malformed one) must not be
     read as a resolved outcome — that reading is what deleted the only trace on
     the routine resume/clear/compact replay path (see ``_flush_one``'s comment).
+
+    ⛔ TWO body shapes reach this function, and reading only one of them made the
+    clear inert on whichever leg saw the other (#12460's verification measured
+    exactly that, twice — once on the Pi leg, once here):
+
+      * the **synthesised confirmation** body (``{"confirmed": "filed" |
+        "unextracted"}``) ``__main__._session_post`` builds for a REFUSAL that
+        turned out to have committed;
+      * the **raw capture receipt** (``hosted_api`` POST ``/v1/sessions``:
+        ``{session_id, turns, extracted, points, extraction_mode, …}``), which is
+        every ROUTINE 2xx on both legs and carries neither ``confirmed`` nor
+        ``extraction_outcome``.
+
+    The receipt clauses are the same evidence ``session_confirm.confirm_capture``
+    turns into its verdicts: ``extracted >= 1`` ⇒ extraction ran ⇒ ``FILED``;
+    a store-only ``extraction_mode`` ⇒ the server knows it did not run ⇒
+    ``UNEXTRACTED`` (a KNOWN negative — which is why #4188/#4258 keep their
+    priced deferral while this marker does not).
+
+    ⛔ ``extracted: 0`` in a normal mode is NOT evidence. The capture handler the
+    transport bound abandoned may still be extracting — the server's own "no
+    outcome yet" state — so a zero is AMBIGUOUS, not a negative, and reading it
+    as one is the #12362 bug wearing the other mask.
     """
     if not isinstance(body, dict):
         return False
     verdict = body.get("confirmed")
-    return (isinstance(verdict, str)
-            and verdict.strip().lower() in RECORDED_OUTCOME_VERDICTS)
+    if (isinstance(verdict, str)
+            and verdict.strip().lower() in RECORDED_OUTCOME_VERDICTS):
+        return True
+    extracted = body.get("extracted")
+    # ``session_confirm.session_extracted``'s rule exactly: a bool or a
+    # non-integer reads as 0, so an odd count can never satisfy the test.
+    if isinstance(extracted, int) and not isinstance(extracted, bool) and extracted >= 1:
+        return True
+    mode = body.get("extraction_mode")
+    return (isinstance(mode, str)
+            and mode.strip().lower() in STORE_ONLY_EXTRACTION_MODES)
 
 
 @dataclass
@@ -1745,14 +1809,13 @@ def write_spool_entry(
     # `tortoise/pi-hooks/tortoise-capture.ts` carries the same key forward as a
     # PRESERVATION obligation, because a fresh meta literal there would otherwise
     # erase a Python-stamped entry's marker (the cross-leg gap a reviewer proved).
-    # ⚠️ RESIDUAL, stated rather than implied: that leg ALSO files (its own
-    # `flushSpool`), but its filing path reads no response body (`PostResult`
-    # carries none), so it can neither stamp this key nor CLEAR it — a session
-    # whose growth is filed by the Pi leg keeps a marker that a Python-side
-    # filing of the same verdict would have cleared. Not a false PASS (the trace
-    # only ever over-reports an unknown state, never hides one) and it is what
-    # the health line's HISTORICAL wording exists to survive; porting the clear
-    # to the Pi CAS needs the body on that path.
+    # ✅ #12460 CLOSED the residual that used to stand here: that leg's own filing
+    # (`flushSpool`) now reads the 2xx body and applies the SAME two predicates
+    # (`outcomeUnrecorded` stamps, `outcomeRecorded` clears, anything else leaves
+    # the marker alone), so the two legs agree about a session whichever one filed
+    # its growth. Both the marker key/value and the recorded-verdict allow-list are
+    # pinned equal across the two files by
+    # `tests/test_12379_unrecorded_trace.py::test_the_two_legs_share_one_marker_and_verdict_vocabulary`.
     if (prior or {}).get(UNRECORDED_OUTCOME_KEY) == UNRECORDED_OUTCOME_VALUE:
         meta[UNRECORDED_OUTCOME_KEY] = UNRECORDED_OUTCOME_VALUE
     # Set-only-when-present, FIRST-WRITER-WINS, and — unlike `model` below,

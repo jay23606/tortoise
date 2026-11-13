@@ -604,7 +604,9 @@ test("the Python drain's unrecorded-outcome marker survives a Pi re-snapshot (#1
   const turns = [{ role: "user" as const, content: "hi" }];
   writeSpoolEntry(spool, snapshot(sid, turns));
 
-  // Simulate the Python drain's stamp (this leg never writes it).
+  // Simulate a stamp from the OTHER leg (`capture_spool._flush_one`) — since
+  // #12460 this leg owns the stamp/clear too, so the fixture exists to model a
+  // marker written by someone other than the code under test.
   const metaPath = join(spool, "entries", `${entryKey(sid)}.meta.json`);
   const stamped = JSON.parse(readFileSync(metaPath, "utf8"));
   writeFileSync(
@@ -637,6 +639,217 @@ test("a session with no unrecorded outcome gains no marker on a re-snapshot (#12
     { role: "user" as const, content: "again" },
   ]));
   assert.equal(readSpoolEntry(spool, sid)?.extraction_outcome, undefined);
+});
+
+test("a Pi filing that reports a RECORDED outcome CLEARS the marker (#12460)", async () => {
+  // The defect (#12460): this leg's filing path read NO response body
+  // (`PostResult` carried none), so it could never clear the marker — a session
+  // the server had RESOLVED stayed named as "filed with no recorded outcome at
+  // the time" until its spool entry was evicted, while a Python-side filing of
+  // the SAME verdict cleared it. Two legs, one shared directory, opposite
+  // answers about one session.
+  //
+  // MUTATIONS THAT RED THIS: leave the marker standing on the success path
+  // (the pre-fix shape); read `res.ok` alone as "outcome recorded" (that would
+  // clear on a `replayed` body too — see the uninformative-body test below).
+  const spool = tmpSpool();
+  const sid = "sess-pi-clears-marker";
+  writeSpoolEntry(spool, snapshot(sid, [{ role: "user" as const, content: "hi" }]));
+  stampUnrecordedMarker(spool, sid);
+  assert.equal(readSpoolEntry(spool, sid)?.extraction_outcome, "unknown");
+
+  const server = recordingServer({ confirmed: "filed", extracted: 3 });
+  const summary = await flushSpool(TEST_CFG, {
+    dir: spool, fetchImpl: server.fetchImpl, now: 1,
+  });
+
+  assert.equal(summary.filed, 1, "the turns are durable — the entry must still file");
+  assert.equal(
+    readSpoolEntry(spool, sid)?.extraction_outcome,
+    undefined,
+    "the server recorded how the capture ended, so this trace is STALE — a " +
+      "marker left standing is a permanent false alarm on `session health`",
+  );
+  assert.ok(
+    readSpoolEntry(spool, sid)?.filed_key,
+    "clearing the marker must not disturb the filing stamp written in the same CAS",
+  );
+});
+
+test("a Pi filing that reports the STORE-ONLY outcome also clears the marker (#12460)", async () => {
+  // The other resolved shape: `confirmed: unextracted` says extraction did NOT
+  // run and the server KNOWS it (#4188 / #4258) — not the same state as
+  // "unknown". Python's `outcome_recorded` accept-list is (`filed`,
+  // `unextracted`); this leg must answer identically or one shared meta flips
+  // against the other.
+  //
+  // MUTATIONS THAT RED THIS: narrow the allow-list to `filed` alone.
+  const spool = tmpSpool();
+  const sid = "sess-pi-clears-store-only";
+  writeSpoolEntry(spool, snapshot(sid, [{ role: "user" as const, content: "hi" }]));
+  stampUnrecordedMarker(spool, sid);
+
+  const server = recordingServer({ confirmed: "unextracted", outcome_known: true });
+  await flushSpool(TEST_CFG, { dir: spool, fetchImpl: server.fetchImpl, now: 1 });
+
+  assert.equal(readSpoolEntry(spool, sid)?.extraction_outcome, undefined);
+});
+
+test("a Pi filing that reports an UNRECORDED outcome STAMPS the marker (#12460)", async () => {
+  // The stamp half. A Pi-filed entry whose body says the outcome was never
+  // recorded must carry the SAME durable trace the Python drain writes, or the
+  // state is invisible on exactly the boxes whose growth this leg files.
+  //
+  // MUTATIONS THAT RED THIS: port only the CLEAR (then the trace is written by
+  // one leg and only when the other leg's POST happened to be the one that saw
+  // the marker).
+  const spool = tmpSpool();
+  const sid = "sess-pi-stamps-marker";
+  writeSpoolEntry(spool, snapshot(sid, [{ role: "user" as const, content: "hi" }]));
+  assert.equal(readSpoolEntry(spool, sid)?.extraction_outcome, undefined);
+
+  const server = recordingServer({
+    confirmed: "pending", extraction_outcome: "unknown",
+  });
+  await flushSpool(TEST_CFG, { dir: spool, fetchImpl: server.fetchImpl, now: 1 });
+
+  assert.equal(
+    readSpoolEntry(spool, sid)?.extraction_outcome,
+    "unknown",
+    "the body says the extraction outcome was never recorded — without the " +
+      "durable marker this session leaves no trace at all",
+  );
+  assert.ok(readSpoolEntry(spool, sid)?.filed_key);
+});
+
+test("an UNINFORMATIVE 2xx body never clears the marker (#12460)", async () => {
+  // Round 1's P1 in #12416's review, re-pinned on THIS leg now that it reads a
+  // body: the clear must be a CLOSED allow-list, never "anything that is not
+  // pending" and never "the POST succeeded". The routine resume / clear /
+  // compact path re-captures a grown transcript and answers `replayed` — a
+  // body that says "already stored", not "recorded how extraction ended" — and
+  // a NULL-outcome session can never be re-extracted by a re-POST, so clearing
+  // there deletes the only trace while the condition persists.
+  //
+  // MUTATIONS THAT RED THIS: `if (res.ok) onDisk.extraction_outcome = undefined`
+  // (unconditional clear), or `confirmed !== "pending"`.
+  const spool = tmpSpool();
+  const sid = "sess-pi-uninformative-body";
+  writeSpoolEntry(spool, snapshot(sid, [{ role: "user" as const, content: "hi" }]));
+  stampUnrecordedMarker(spool, sid);
+
+  const junk: Record<string, unknown>[] = [
+    {},
+    { mode: "replayed" },
+    { confirmed: "replayed" },
+    { confirmed: "FLIED" },
+    { confirmed: null },
+    { confirmed: 1 },
+    { confirmed: "pending" },
+  ];
+  for (const [i, body] of junk.entries()) {
+    // New content, so the entry is unfiled again and the POST really happens.
+    writeSpoolEntry(spool, snapshot(sid, [
+      { role: "user" as const, content: `turn ${i}` },
+    ]));
+    const server = recordingServer(body);
+    const summary = await flushSpool(TEST_CFG, {
+      dir: spool, fetchImpl: server.fetchImpl, now: 10 + i,
+    });
+    assert.equal(summary.filed, 1);
+    assert.equal(
+      readSpoolEntry(spool, sid)?.extraction_outcome,
+      "unknown",
+      `${JSON.stringify(body)} does not report how the capture ended, so it is ` +
+        "not evidence — the marker must stand",
+    );
+  }
+});
+
+test("a Pi filing whose RECEIPT reports extracted points clears the marker (#12460)", async () => {
+  // ⛔ THE PRODUCTION SHAPE. The Pi leg posts to `/v1/sessions` directly, so the
+  // body it receives is the capture RECEIPT
+  // (`tortoise/hosted_api.py:20100-20141`): `{session_id, turns, extracted,
+  // points, extraction_mode, …}` — it carries NEITHER `confirmed` NOR
+  // `extraction_outcome`. A predicate that only mirrors the Python drain's
+  // `confirmed` vocabulary is inert on this leg: it would close #12460 without
+  // changing a single user-visible outcome (measured in this lane's
+  // verification). `extracted >= 1` is the SAME evidence
+  // `session_confirm.confirm_capture` turns into its `FILED` verdict.
+  //
+  // MUTATIONS THAT RED THIS: drop the `extracted` clause and keep only the
+  // mirrored `confirmed` allow-list (the dead-code shape).
+  const spool = tmpSpool();
+  const sid = "sess-receipt-extracted";
+  writeSpoolEntry(spool, snapshot(sid, [{ role: "user" as const, content: "hi" }]));
+  stampUnrecordedMarker(spool, sid);
+
+  const server = recordingServer({
+    session_id: sid, turns: 1, extracted: 4, points: ["a", "b"],
+    extraction_mode: "graph", first_capture: false,
+  });
+  await flushSpool(TEST_CFG, { dir: spool, fetchImpl: server.fetchImpl, now: 1 });
+
+  assert.equal(
+    readSpoolEntry(spool, sid)?.extraction_outcome,
+    undefined,
+    "the receipt reports four extracted points — extraction RAN, so a marker " +
+      "standing over it is a permanent false alarm",
+  );
+});
+
+test("a STORE-ONLY receipt mode clears the marker as a KNOWN negative (#12460)", async () => {
+  // The other resolved shape off the same receipt: `extraction_mode`
+  // `no-provider` / `extraction-disabled` is the server SAYING extraction did
+  // not run (#4188 / #4258) — the `UNEXTRACTED` verdict, not "unknown". The
+  // Python leg reaches the same conclusion through its `GET` confirmation.
+  //
+  // MUTATIONS THAT RED THIS: require `extracted >= 1` unconditionally (a keyless
+  // org then keeps a false alarm for every session, forever).
+  for (const mode of ["no-provider", "extraction-disabled"]) {
+    const spool = tmpSpool();
+    const sid = `sess-receipt-store-only-${mode}`;
+    writeSpoolEntry(spool, snapshot(sid, [{ role: "user" as const, content: "hi" }]));
+    stampUnrecordedMarker(spool, sid);
+    const server = recordingServer({
+      session_id: sid, turns: 1, extracted: 0, extraction_mode: mode,
+    });
+    await flushSpool(TEST_CFG, { dir: spool, fetchImpl: server.fetchImpl, now: 1 });
+    assert.equal(
+      readSpoolEntry(spool, sid)?.extraction_outcome,
+      undefined,
+      `extraction_mode ${mode} is a KNOWN negative — the server said extraction ` +
+        "did not run, so the state is no longer unknown",
+    );
+  }
+});
+
+test("an AMBIGUOUS receipt (extracted 0, normal mode) leaves the marker standing (#12460)", async () => {
+  // ⛔ The load-bearing negative. `extracted: 0` in a normal mode is the server's
+  // "no outcome yet" state — the capture handler the transport bound abandoned
+  // may STILL be extracting (#12362's measurement: three captures printed
+  // "nothing extracted" and read back holding 7, 2 and 5 points seconds later).
+  // Treating a zero as evidence is the #12362 bug wearing the other mask, and a
+  // NULL-outcome session can never be re-extracted by a re-POST.
+  //
+  // MUTATIONS THAT RED THIS: `extracted >= 0`, or any "not pending" reading of
+  // the receipt.
+  const spool = tmpSpool();
+  const sid = "sess-receipt-ambiguous";
+  writeSpoolEntry(spool, snapshot(sid, [{ role: "user" as const, content: "hi" }]));
+  stampUnrecordedMarker(spool, sid);
+
+  const server = recordingServer({
+    session_id: sid, turns: 1, extracted: 0, extraction_mode: "graph",
+  });
+  await flushSpool(TEST_CFG, { dir: spool, fetchImpl: server.fetchImpl, now: 1 });
+
+  assert.equal(
+    readSpoolEntry(spool, sid)?.extraction_outcome,
+    "unknown",
+    "a zero extraction count in a normal mode does not say whether the outcome " +
+      "was ever recorded — it must never resolve the marker",
+  );
 });
 
 test("a refused STORED instant does not repost forever (skip + CAS normalise)", async () => {
@@ -1420,7 +1633,7 @@ async function settle(): Promise<void> {
 }
 
 /** A server that upserts by `session_id` (like `/v1/sessions`) and counts POSTs. */
-function recordingServer() {
+function recordingServer(okBody: Record<string, unknown> = {}) {
   const sessions = new Map<string, Record<string, unknown>>();
   let posts = 0;
   const fetchImpl = async (url: string, init?: Record<string, unknown>) => {
@@ -1429,9 +1642,27 @@ function recordingServer() {
       posts += 1;
       sessions.set(String(body.session_id), body);
     }
-    return { ok: true, status: 200, json: async () => ({}) };
+    // `okBody` is the 2xx BODY — the only evidence a filing attempt's outcome
+    // can be read from (#12460). Default `{}` keeps every pre-existing caller
+    // byte-identical: an empty body is uninformative, exactly as before.
+    return { ok: true, status: 200, json: async () => okBody };
   };
   return { fetchImpl: fetchImpl as never, sessions, posts: () => posts };
+}
+
+/**
+ * Simulate the Python drain's stamp (#12379) on a spool entry this leg wrote.
+ *
+ * This leg must both PRESERVE that marker across a re-snapshot and — since
+ * #12460 — stamp or CLEAR it when its OWN filing gets an informative body.
+ */
+function stampUnrecordedMarker(spool: string, sessionId: string): void {
+  const metaPath = join(spool, "entries", `${entryKey(sessionId)}.meta.json`);
+  const stamped = JSON.parse(readFileSync(metaPath, "utf8"));
+  writeFileSync(
+    metaPath,
+    `${JSON.stringify({ ...stamped, extraction_outcome: "unknown" }, null, 2)}\n`,
+  );
 }
 
 /**
