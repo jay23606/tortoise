@@ -652,7 +652,8 @@ def _wait_bound_arrival() -> float | None:
     return None
 
 
-#: #10749: the deadline the wait-bound seam ACTUALLY gave this dispatch, as a ContextVar.
+#: #10749: the ABSOLUTE deadline (``time.monotonic()`` + the seam's ``remaining``) the wait-bound
+#: seam will enforce for this dispatch, as a ContextVar.
 #:
 #: ``_wait_bound_arrival()`` is None on stdio and on the self-hosted apps (only
 #: ``hosted_api.WaitBoundMiddleware`` writes that stamp) — but the seam still enforces the FULL
@@ -660,12 +661,20 @@ def _wait_bound_arrival() -> float | None:
 #: stdio / no HTTP request``), so "no stamp" is NOT "no deadline": re-deriving the deadline from
 #: the stamp alone read that arm as unbounded and left the tool's 26.0 s tail inside a 10.0 s
 #: bound, which is #10749's defect preserved on stdio and self-hosted HTTP.
-#: Reading the seam's OWN number is what makes the clamp describe the deadline that refuses the
-#: call rather than a second one computed here. `None` therefore means "the seam never ran" — a
-#: direct in-process call (a unit test, ``_original_call_tool`` reached unwrapped) — which is the
-#: only state where #3143's unclamped allowance is still the right answer.
-_WAIT_BOUND_REMAINING: contextvars.ContextVar[float | None] = contextvars.ContextVar(
-    "tortoise_wait_bound_remaining", default=None)
+#:
+#: ⛔ A DEADLINE, not the DURATION the seam happens to have left when it bound this. A duration is
+#: frozen at bind time, and the seam's own ``wait_for(shield(task), remaining)`` clock started THEN
+#: — so anything the dispatch spends before the handler clamps (graph resolution, `_get_org_sdk()`)
+#: would be silently un-deducted, and the handler would claim an allowance it no longer has. Measured
+#: with a 4.0 s in-dispatch spend: the duration shape granted the full ``bound − reserve`` and the
+#: worst case became 13.5 s inside a 10.0 s bound, i.e. the -32009 refusal this change removes.
+#: Reading the deadline back at the point of use is what makes the reserve arithmetic true where it
+#: is enforced.
+#: `None` therefore means "the seam never ran" — a direct in-process call (a unit test,
+#: ``_original_call_tool`` reached unwrapped) — the only state where #3143's unclamped allowance is
+#: still the right answer.
+_WAIT_BOUND_DEADLINE: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "tortoise_wait_bound_deadline", default=None)
 
 
 #: #10749: the margin kept back from the transport deadline AFTER the health tool's other three
@@ -675,15 +684,17 @@ _HEALTH_TAIL_MARGIN_S = 0.5
 
 
 def _mcp_remaining_wait_bound() -> float | None:
-    """The deadline the wait-bound seam gave THIS dispatch, or None when the seam never ran.
+    """Seconds left of the deadline the seam bound for THIS dispatch, or None if it never ran.
 
-    Prefers the ContextVar the seam binds (it covers stdio and the self-hosted apps, where no
-    arrival stamp exists but the bound is still enforced). Falls back to the arrival stamp for a
-    call that reached the tool body without the seam binding — the stamp is still a real deadline.
+    Prefers the ContextVar deadline (it covers stdio and the self-hosted apps, where no arrival
+    stamp exists but the bound is still enforced) and SUBTRACTS the time already spent in this
+    dispatch, so the number returned is the deadline's remaining life NOW, not when the seam
+    started. Falls back to the arrival stamp for a call that reached the tool body without the seam
+    binding — the stamp is still a real deadline, and it too is read as of now.
     """
-    bound = _WAIT_BOUND_REMAINING.get()
-    if bound is not None:
-        return max(0.0, float(bound))
+    deadline = _WAIT_BOUND_DEADLINE.get()
+    if deadline is not None:
+        return max(0.0, float(deadline) - _time.monotonic())
     arrival = _wait_bound_arrival()
     if arrival is None:
         return None
@@ -1463,17 +1474,21 @@ async def _await_under_mcp_wait_bound(name: str, arguments, *, version,
             task_meta=task_meta) if graph_ref is None else
             _scoped_dispatch(name, arguments, graph_ref, version=version,
                              task_meta=task_meta))
-        # #10749: bind the deadline THIS seam is about to enforce, so a handler that
+        # #10749: bind the DEADLINE THIS seam is about to enforce, so a handler that
         # owns its own bounded phases (tortoise_health) can clamp them under it
         # instead of re-deriving a deadline from the arrival stamp — which does not
         # exist on stdio or the self-hosted apps even though the bound still applies.
+        # An absolute deadline rather than the `remaining` duration on purpose: the
+        # seam's `wait_for` clock starts HERE, so the handler must deduct whatever this
+        # dispatch spends before it clamps (measured: a 4.0 s graph-resolution spend made
+        # the duration shape grant an allowance whose worst case was 13.5 s inside 10.0 s).
         # Set BEFORE the task is created so the task's copied context carries it; the
         # reset below touches only this frame's binding, never the task's copy.
-        bound_token = _WAIT_BOUND_REMAINING.set(remaining)
+        bound_token = _WAIT_BOUND_DEADLINE.set(_time.monotonic() + remaining)
         try:
             task = asyncio.ensure_future(dispatch)
         finally:
-            _WAIT_BOUND_REMAINING.reset(bound_token)
+            _WAIT_BOUND_DEADLINE.reset(bound_token)
     try:
         # ``wait_for`` + ``shield`` rather than ``asyncio.wait`` — the same
         # primitive choice as ``hosted_api.WaitBoundMiddleware.__call__``. The
@@ -5222,12 +5237,14 @@ def tortoise_health() -> dict:
     DB probe. The allowance is therefore CLAMPED to
     ``remaining − (PROBE_TIMEOUT + GRAPH_SIZE_TIMEOUT + QUOTA_STATE_TIMEOUT + margin)``
     (``_health_setup_allowance``) under the deadline the seam itself bound into
-    ``_WAIT_BOUND_REMAINING`` — NOT re-derived from the arrival stamp, which does not exist on
+    ``_WAIT_BOUND_DEADLINE`` — NOT re-derived from the arrival stamp, which does not exist on
     stdio or the self-hosted apps even though the bound still applies there. The clamp only
     REDUCES, so #3143's allowance stands wherever it fits; where it does not, the probe is
     unobserved and ``status="unknown"`` (#3683) carries the truth, and ``setup_timeout_clamped``
     (a boolean — the duration beside it can be a falsy 0.0) names the clamp so an unknown is
-    never read as a broken store."""
+    never read as a broken store. The clamp is a SAFETY NET, not the shape: where it bites, this
+    tool can no longer report a truthful deep state for a cold-but-reachable store at all, and
+    restoring that (split fast/deep; needs the MCP surface approval) is #12481."""
     # #236: route through _safe() so every tool is gated (defense-in-depth;
     # reachable only post-auth over HTTP).
     # #3143: pass the cold-start allowance (call-time resolved) so a reachable

@@ -22,7 +22,7 @@ sat at 6.89-6.96 s, which is exactly the "occasionally ok, mostly refused" outco
 WHAT THIS FILE PINS. The fix is shape B of the issue (clamp at the seam — no surface change):
 the allowance the handler SPENDS is ``min(probe_setup_timeout(), remaining - reserve)`` where
 ``remaining`` is the deadline ``_await_under_mcp_wait_bound`` itself bound into
-``_WAIT_BOUND_REMAINING`` (so it covers stdio and self-hosted HTTP, where there is no arrival
+``_WAIT_BOUND_DEADLINE`` (so it covers stdio and self-hosted HTTP, where there is no arrival
 stamp), ``reserve`` is the other three bounded phases plus a delivery margin, and the clamp is
 VISIBLE on the report — as a BOOLEAN discriminator, because the duration beside it can be a
 falsy ``0.0`` — so a clamped (unobserved) probe cannot be misread as a broken store (#3683's
@@ -35,6 +35,8 @@ import time
 import pytest
 
 from tortoise import mcp_auth, mcp_server, monitoring, quota
+
+_BOUND = float(mcp_auth._TRANSPORT_WAIT_BOUND_S)
 
 
 def _reserve() -> float:
@@ -70,12 +72,12 @@ def _http_transport():
 def _no_seam_binding():
     """Start every test from "the seam never ran", so a test opts IN to a deadline explicitly.
 
-    ``_WAIT_BOUND_REMAINING`` is a module-level ContextVar; without this the value one test binds
+    ``_WAIT_BOUND_DEADLINE`` is a module-level ContextVar; without this the value one test binds
     would leak into the next and make the unclamped-arm test pass for the wrong reason.
     """
-    token = mcp_server._WAIT_BOUND_REMAINING.set(None)
+    token = mcp_server._WAIT_BOUND_DEADLINE.set(None)
     yield
-    mcp_server._WAIT_BOUND_REMAINING.reset(token)
+    mcp_server._WAIT_BOUND_DEADLINE.reset(token)
 
 
 def _capture(monkeypatch):
@@ -171,7 +173,7 @@ def test_a_direct_in_process_call_keeps_the_unclamped_allowance(monkeypatch):
     ``tests/test_monitoring.py`` rely on exactly this.
     """
     monkeypatch.setattr(mcp_server, "_wait_bound_arrival", lambda: None)
-    assert mcp_server._WAIT_BOUND_REMAINING.get() is None
+    assert mcp_server._WAIT_BOUND_DEADLINE.get() is None
     seen = _capture(monkeypatch)
 
     mcp_server.tortoise_health()
@@ -188,12 +190,13 @@ def test_stdio_the_seam_still_binds_the_full_transport_bound(monkeypatch):
     bound — #10749's defect preserved on a first-class transport, with the test blessing it.
     """
     monkeypatch.setattr(mcp_server, "_wait_bound_arrival", lambda: None)
-    token = mcp_server._WAIT_BOUND_REMAINING.set(float(mcp_auth._TRANSPORT_WAIT_BOUND_S))
+    token = mcp_server._WAIT_BOUND_DEADLINE.set(
+        time.monotonic() + float(mcp_auth._TRANSPORT_WAIT_BOUND_S))
     try:
         seen = _capture(monkeypatch)
         report = mcp_server.tortoise_health()
     finally:
-        mcp_server._WAIT_BOUND_REMAINING.reset(token)
+        mcp_server._WAIT_BOUND_DEADLINE.reset(token)
 
     bound = mcp_auth._TRANSPORT_WAIT_BOUND_S
     assert seen["setup_timeout"] <= bound - _reserve()
@@ -256,12 +259,12 @@ def test_the_report_says_it_was_clamped_with_a_truthy_discriminator(monkeypatch)
 
 def test_a_spent_deadline_still_reads_as_clamped(monkeypatch):
     """The 0.0 case — the most severe clamp — must not read as "not clamped" (falsy duration)."""
-    token = mcp_server._WAIT_BOUND_REMAINING.set(0.0)
+    token = mcp_server._WAIT_BOUND_DEADLINE.set(time.monotonic())
     try:
         _capture(monkeypatch)
         report = mcp_server.tortoise_health()
     finally:
-        mcp_server._WAIT_BOUND_REMAINING.reset(token)
+        mcp_server._WAIT_BOUND_DEADLINE.reset(token)
 
     assert report["setup_timeout_clamped_s"] == 0.0
     assert report["setup_timeout_clamped"] is True
@@ -320,7 +323,8 @@ async def test_the_seam_binds_its_deadline_where_the_tool_body_can_read_it(monke
     seen: dict = {}
 
     async def fake_inner(name, arguments, **kwargs):
-        seen["remaining"] = mcp_server._WAIT_BOUND_REMAINING.get()
+        seen["deadline"] = mcp_server._WAIT_BOUND_DEADLINE.get()
+        seen["remaining_after_bind"] = mcp_server._mcp_remaining_wait_bound()
         return {"ok": True}
 
     monkeypatch.setattr(mcp_server, "_original_call_tool", fake_inner)
@@ -331,7 +335,95 @@ async def test_the_seam_binds_its_deadline_where_the_tool_body_can_read_it(monke
     await mcp_server._await_under_mcp_wait_bound(
         "tortoise_health", {}, version=None, task_meta=None)
 
-    assert seen["remaining"] == pytest.approx(float(mcp_auth._TRANSPORT_WAIT_BOUND_S)), (
-        "the seam did not bind its deadline for the tool body to clamp under — on stdio and "
+    assert seen["deadline"] is not None, (
+        "the seam did not bind a deadline for the tool body to clamp under — on stdio and "
         "self-hosted HTTP that leaves tortoise_health spending its unclamped 26.0 s tail"
+    )
+    assert seen["deadline"] == pytest.approx(time.monotonic() + _BOUND, abs=5.0), (
+        "the seam bound something other than the absolute deadline it enforces"
+    )
+    assert seen["remaining_after_bind"] == pytest.approx(_BOUND, abs=1.0), (
+        "the body did not read back approximately the full bound"
+    )
+
+
+def test_time_spent_after_the_seam_binds_reduces_the_allowance(monkeypatch):
+    """A DEADLINE, not a duration — the fix must deduct whatever the dispatch already spent.
+
+    The seam's own ``wait_for`` clock starts when it binds, so a duration captured there grants an
+    allowance the handler no longer has. Measured on the cycle-2 head with a 4.0 s in-dispatch spend
+    (the slot ``_resolve_graph_argument``'s control-plane lookup occupies): the duration shape
+    granted the full ``bound - reserve`` and the worst case became ``4.0 + 3.5 + 1.5 + 1.5 + 3.0 =
+    13.5 s`` inside a 10.0 s bound — the ``-32009`` refusal this change exists to remove, re-armed
+    silently. This pins the deadline read at the point of USE.
+    """
+    monkeypatch.setattr(mcp_server, "_wait_bound_arrival", lambda: None)
+    token = mcp_server._WAIT_BOUND_DEADLINE.set(time.monotonic() + _BOUND)
+    try:
+        time.sleep(2.0)          # the dispatch spending time before the handler clamps
+        seen = _capture(monkeypatch)
+        mcp_server.tortoise_health()
+    finally:
+        mcp_server._WAIT_BOUND_DEADLINE.reset(token)
+
+    assert seen["setup_timeout"] <= _BOUND - 2.0 - _reserve(), (
+        "the allowance ignored the ~2 s spent after the seam bound its deadline; the handler "
+        "then claims time it no longer has and the transport refuses the call"
+    )
+
+
+def test_a_clamp_raises_the_aggregate_counter_and_an_unclamped_call_does_not(monkeypatch):
+    """The counter is the only aggregate that keeps "health is being clamped" answerable.
+
+    The clamp moves a degradation from a transport REFUSAL (counted by
+    ``wait_bound_breaches``) to an honest ``status="unknown"`` (counted by nothing else), so an
+    unguarded counter is exactly the uncounted-symptom condition that finding was about.
+    """
+    baseline = monitoring.health_setup_clamped_count()
+
+    monkeypatch.setattr(mcp_server, "_wait_bound_arrival", lambda: None)
+    _capture(monkeypatch)
+    mcp_server.tortoise_health()                       # unclamped arm
+    assert monitoring.health_setup_clamped_count() == baseline, (
+        "an UNCLAMPED health call incremented the clamp counter"
+    )
+
+    token = mcp_server._WAIT_BOUND_DEADLINE.set(time.monotonic() + _BOUND)
+    try:
+        _capture(monkeypatch)
+        mcp_server.tortoise_health()                   # clamped arm
+    finally:
+        mcp_server._WAIT_BOUND_DEADLINE.reset(token)
+
+    assert monitoring.health_setup_clamped_count() == baseline + 1, (
+        "a clamped health call did not increment the clamp counter"
+    )
+
+
+def test_metrics_publishes_the_clamp_counter_as_an_int():
+    """The key is what an operator reads on the standalone /health and /metrics surfaces.
+
+    Without this assertion the key can be dropped from ``metrics()`` with the whole suite green —
+    the per-call boolean is pinned by five tests, its aggregate twin by none.
+    """
+    report = monitoring.metrics()
+    assert "health_setup_clamped" in report
+    assert isinstance(report["health_setup_clamped"], int)
+
+
+def test_the_hosted_health_body_publishes_the_clamp_counter():
+    """The hosted app builds its OWN body — ``metrics()``'s key never reaches that surface.
+
+    ``wait_bound_breaches`` is published there explicitly because it is "the surface an operator
+    curls FIRST"; the clamp makes that counter go flat by design, so its positive pair must be
+    published on the same body or the operator's first curl cannot see the degradation at all.
+    """
+    import inspect
+
+    from tortoise import hosted_api
+
+    source = inspect.getsource(hosted_api.health)
+    assert "health_setup_clamped" in source, (
+        "the hosted /health body does not publish health_setup_clamped, so the one surface an "
+        "operator curls first shows wait_bound_breaches: 0 (flat by design) with no pair"
     )

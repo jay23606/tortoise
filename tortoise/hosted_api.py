@@ -7129,6 +7129,14 @@ async def health():
             # means `db.ok`, `backup_watcher.ok` and `record.ok` (the three
             # terms in the `status` expression above), not the counter.
             "wait_bound_breaches": _monitoring.wait_bound_breach_counts(),
+            # #10749: the POSITIVE pair beside that count. The clamp publishes this counter on
+            # `monitoring.metrics()` — which reaches the standalone `/health` and `/metrics` — but
+            # the hosted app builds its OWN body, so without this line the operator's first curl
+            # sees `wait_bound_breaches: 0` (which the clamp makes flat BY DESIGN) and nothing
+            # saying health is being answered as `status="unknown"`. Same rule as the block above:
+            # REPORTED, never folded into `status` (a cumulative counter must not pin the
+            # deployment degraded for the life of the process).
+            "health_setup_clamped": _monitoring.health_setup_clamped_count(),
             "record": record, "build": _build_identity()}
 
 
