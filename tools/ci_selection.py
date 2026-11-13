@@ -3518,25 +3518,25 @@ def _is_safe_root_file(path: str) -> bool:
 #   gh api repos/daniel-ospina/tortoise/commits/6429a14b49
 #     → its file list does NOT contain this path.
 #
-# ⛔ ONLY ON A COMPLETE CLONE do these reproduce locally — CHECK FIRST, with
-# `git rev-parse --is-shallow-repository`, and DO NOT assume which you have: the
-# fleet re-shallows, so the same checkout can answer differently on two days.
-# The outputs below are attributed to the kind of clone that produces them and
-# nothing else:
+# ⛔ NEITHER LOCAL COMMAND BELOW IS A CREATION NUMBER — the server is. Run them
+# only to CORROBORATE what the API already told you. What they answer depends on
+# where this clone's GRAFT BOUNDARY sits, and that MOVES: the same box has
+# measured `6429a14b49` / exit 1 with `git show --stat 6429a14b49` reporting
+# 3787 files / 2,182,456 insertions (boundary AT `6429a14b49`, so git diffs it
+# against the EMPTY TREE), and `79c3d9dbe` / exit 0 with that `--stat` reporting
+# 18 files (boundary above it). Both clones were SHALLOW — so
+# `git rev-parse --is-shallow-repository` does NOT decide which reading you get.
+# Nothing local does. If you must test the mechanism:
 #
-#   COMPLETE clone (full history):
-#   git log origin/main --diff-filter=A -- tests/test_surface_manifest.py  → `79c3d9dbe`
-#   git merge-base --is-ancestor 79c3d9dbe origin/main                     → exit 0
+#   git cat-file -e 6429a14b49^    # fails → boundary at/above it → artifact
 #
-# `git fetch --unshallow` first, or do not run them at all. A graft boundary has
-# no local parent, so git diffs it against the EMPTY TREE: it is reported as an
-# addition, and every ancestry test for a commit OLDER than the boundary returns
-# a false negative. SHALLOW clone readings, measured on this repo's shallow
-# checkout: `6429a14b49` is named in `$(git rev-parse --git-common-dir)/shallow`,
-# `git show --stat 6429a14b49` reports 3787 files / 2,182,456 insertions (the
-# whole repo), and the two commands above return `6429a14b49` and exit 1. That is
-# the graft, not a creation — do not write those two outputs into this comment a
-# fourth time.
+# and in EVERY case: disagreement with the server means YOUR CLONE is grafted,
+# not that this comment is stale. The mechanism is that a graft boundary has no
+# local parent, so git diffs the boundary commit against the EMPTY TREE: it reads
+# as an addition, and every ancestry test for a commit OLDER than the boundary
+# returns a false negative. So a local reading is evidence about your clone's
+# boundary — never about when the file was created. `git fetch --unshallow`, then
+# re-read; never write either set of outputs into this comment as the answer.
 #
 # The other wrong reading: `#12313` did not create the file (it appended the
 # reader — the original error). Re-derive before re-admitting the entry; do not

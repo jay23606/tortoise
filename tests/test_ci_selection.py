@@ -3108,8 +3108,13 @@ _NON_CODE_DOC_ROOTS = ("tests", "tools", "scripts", ".github", "tortoise")
 #: non-vacuity test — the mention census's `_CENSUS_ROOTS` above is the second,
 #: and the test binds all three. The BIND is what reds a single-list edit; the
 #: literal expectation is defence in depth for a SYNCHRONISED shrink, which the
-#: bind cannot see and which stays GREEN unless it removes `scripts` (its own
-#: ⚠️ SCOPE note below).
+#: bind cannot see: a synchronised edit arrives with a matching literal and stays
+#: GREEN unless it removes `scripts` (measured — drop `tortoise` from all three,
+#: add `config` to all three, rename `tools`->`toolz` in all three all pass). It
+#: becomes discriminative only once the bind is LOOSENED, where a one-list shrink
+#: REDs the literal while a derived expectation does not (measured). So it is
+#: defence in depth, and it still forces whoever edits the literals to say what
+#: reads the reprieved docs from a new root.
 #:
 #: ⚠️ SCOPE, stated rather than overclaimed: this is a review PROMPT, not an
 #: enforced re-derivation. A SYNCHRONISED edit of the literals is GREEN only if
@@ -3306,21 +3311,25 @@ def test_the_content_census_sees_a_reader_end_to_end(tmp_path, monkeypatch):
     machine-local symlink, #9475), so the walk is permanently narrower there.
 
     ⛔ The expectation is built from a LITERAL pin rather than from
-    `_NON_CODE_DOC_ROOTS`, as DEFENCE IN DEPTH — not as a live detector. The bind
-    below already forces the two to be equal for every input that reaches this
-    assertion, so a shrunk tuple cannot arrive here with a matching expectation.
-    (Before the bind and the trailing-slash pin landed, deriving the expectation
-    DID leave this green over a shrunk tuple — measured then; at this head the
-    same edit REDs at the bind when applied to one list and at the pin when
-    applied to all three, so do not re-measure it as GREEN.) A root is
-    therefore load-bearing in three ways: the pin reds on any edit that changes a
-    root NAME in one list, a synthetic reader under EVERY pinned root must come
-    back, and a `.sh` reader pins the walk's shell branch
+    `_NON_CODE_DOC_ROOTS`, as DEFENCE IN DEPTH — NOT as a live detector. At this
+    head it never fires: the bind below forces all three lists equal, so a
+    SYNCHRONISED shrink arrives with a MATCHING literal expectation and passes
+    (MEASURED: drop `tortoise` from all three -> GREEN; add `config` to all
+    three -> GREEN; rename `tools`->`toolz` in all three -> GREEN) — and a derived
+    expectation measures the same GREEN, so the literal buys nothing TODAY. It
+    becomes discriminative only once the bind is LOOSENED (MEASURED: loosened
+    bind + one-list shrink -> the literal REDs here, a derived expectation stays
+    GREEN). A root is load-bearing in three ways, and NOT all of them are this
+    assertion: the BIND reds on any edit that changes a root NAME in one list,
+    the trailing-slash pin reds when `scripts` loses its slash, a synthetic
+    reader under EVERY pinned root must come back, and a `.sh` reader pins the
+    walk's shell branch
     (`_content_read_in_shell` was otherwise only exercised as a leaf).
 
     Mutation checks (MEASURED, each reverted): `_NON_CODE_DOC_ROOTS` emptied ->
-    RED; one root dropped from the CODE list only -> RED (the pin fires); `.sh`
-    dropped from the walk's suffix filter -> RED (the `.sh` reader is never
+    RED at the BIND; one root dropped from ONE list -> RED at the BIND (the
+    "diverged" message — not the expectation below); `.sh` dropped from the
+    walk's suffix filter -> RED at the expectation (the `.sh` reader is never
     seen). A SYNCHRONISED edit is GREEN only if it PRESERVES `scripts`
     (measured: drop `tortoise` from all three -> GREEN; add `config` to all
     three -> GREEN), and REDs when it removes `scripts` (measured: all three ->
