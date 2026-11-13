@@ -3518,8 +3518,9 @@ def _is_safe_root_file(path: str) -> bool:
 #   gh api repos/daniel-ospina/tortoise/commits/6429a14b49
 #     → its file list does NOT contain this path.
 #
-# ⛔ ONLY ON A COMPLETE CLONE do these reproduce locally, and THIS CHECKOUT OFTEN
-# IS NOT ONE — it is SHALLOW:
+# ⛔ ONLY ON A COMPLETE CLONE do these reproduce locally — CHECK FIRST, with
+# `git rev-parse --is-shallow-repository`, because a lane's checkout may not be
+# one (the one measured here is complete and returns the two outputs below):
 #
 #   git log origin/main --diff-filter=A -- tests/test_surface_manifest.py  → `79c3d9dbe`
 #   git merge-base --is-ancestor 79c3d9dbe origin/main                     → exit 0
