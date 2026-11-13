@@ -5360,35 +5360,20 @@ def test_the_epic_bundle_cites_the_branch_rederived_resolve():
             # no registration at all, so the number is `main`'s own trail.
             # Measured values, not a delta: 9943 at `9828250732`, 9949 at
             # `ba84fbfabf`, 9965 at `e200623286`, 9973 at `cd22562c24e4`, 9987 at
-            # `f1f74135a1`, 10019 at `ea2c41a696` (+32), 10020 at `a53ba8cf53`
-            # (+1) and 10021 at `73c479ce40` (+1) — the tip `main` carried when
-            # this row was re-derived (`87c07462`). ⛔ `9951` is in that list
-            # only because an earlier revision printed it: a predicted merge-tree
-            # value (9943 + 8) no commit on `main` ever carried, and the
-            # `10005`/`10019` pair that replaced it described a side branch's
-            # OWN tree and its MERGE tree respectively — `10005` = 9973 + that
-            # branch's 32 lines alone, `10019` = the same + the 14 `main`
-            # already carried. `10005` was never a value on `main`: at `main`
-            # `87c07462` line 10005 is a comment, with the writeprobe entry at
-            # 10021 (earlier `main` commits put a `durations:` row there, so this
-            # is anchored to that tip, not to every `main`) — and the
-            # remote no longer publishes the branch that carried it, so that
-            # commit's objects survive only in a checkout that fetched it while
-            # the branch existed (`git ls-remote origin
-            # refs/heads/fix/11825-replace-prim` → empty). Hence `10005` is
-            # stated as that branch's own arithmetic (9973 + 32), not as a line
-            # a reader can go and look at; its
-            # 32-line block has
-            # since landed on `main` itself (`ea2c41a696`), which is what makes
-            # 10019 a real value again one landing later. The deltas are where
-            # the registrations landed:
-            # `main`'s +14 sits at 2237 + 9150 (only the 2237 one is above the
-            # twins; both are above the entry), its +32 at 7535 and its two +1s
-            # at 1039 and 2237 — all above the entry, so the entry moves by the
-            # whole +78. `carve_out:`
-            # opens 9895 and `uri_requiring:` 10226, so 10021 is inside the
-            # section.
-            ("10021", "- test_pack_logic_writeprobe_11083.py"),
+            # `f1f74135a1` (+14), 10021 at `87c07462a8` (+34 across
+            # `ea2c41a696`/`a53ba8cf53`/`73c479ce40`), 10022 at `42409813a7`
+            # (+1 @2237, #12348), and 10076 at `main`'s tip `ca74f2375ef4`
+            # (+54 across `6261c23a4b52` +19, `276503dad1b1` +13 and
+            # `ca74f2375ef4` +22 — the tip commit alone inserts 23 lines, only
+            # 22 above the entry, so `git show ca74f2375ef4` is not the 54).
+            # ⛔ `9951`, `10005`, `10019` and `10034` each went stale
+            # the same way — written from a side
+            # branch's own arithmetic (`10005` = 9973 + 32, on a branch the
+            # remote no longer publishes), a parent's tip, or a merge-tree
+            # PREDICTION (`9951` was 9943 + the 8 lines #12060 was *expected*
+            # to add and existed on no commit) — instead of re-derived from the
+            # tree that merges. Re-read the SUM of every hunk above the entry.
+            ("10076", "- test_pack_logic_writeprobe_11083.py"),
         ), "ci_surfaces", "carve_out:"),
     )
     assert len(rows) >= 9, (
