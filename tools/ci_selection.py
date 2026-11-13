@@ -3492,7 +3492,7 @@ def _is_safe_root_file(path: str) -> bool:
 # The membership test is the CONTENT-READER census, NOT a mention: a doc a guard
 # READS stays out. `README.md` (tests/test_embedded_durability_claim.py:62,
 # tests/test_capacity_page.py:40), `AGENTS.md` (the base-subset pin),
-# `.gitignore` (tests/test_kind_index.py:290) and `.env.example` are therefore
+# `.gitignore` (tests/test_kind_index.py:302) and `.env.example` are therefore
 # NOT here.
 #
 # ⛔ `CONTRIBUTING.md` IS NO LONGER HERE, and the reason it once was is worth

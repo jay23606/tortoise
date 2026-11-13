@@ -3013,7 +3013,7 @@ def test_root_file_read_by_a_test_is_never_allowlisted():
     doc's edit must keep the FULL matrix or that guard is skipped on the only PR
     that needs it (`#12443`). Every name below IS read
     (README.md by `test_embedded_durability_claim.py:62`; AGENTS.md by the
-    base-subset pin; `.gitignore` by `test_kind_index.py:290`; CONTRIBUTING.md by
+    base-subset pin; `.gitignore` by `test_kind_index.py:302`; CONTRIBUTING.md by
     `test_surface_manifest.py`'s removal-docs pin; …) and keeps FULL.
     """
     for name in ("README.md", "AGENTS.md",
@@ -3106,10 +3106,10 @@ _NON_CODE_DOC_ROOTS = ("tests", "tools", "scripts", ".github", "tortoise")
 
 #: `_NON_CODE_DOC_ROOTS` spelled out a THIRD time, ON PURPOSE, for the census's
 #: non-vacuity test — the mention census's `_CENSUS_ROOTS` above is the second,
-#: and the test binds all three. An expectation derived from the tuple shrinks
-#: with it, so dropping a root would keep that test green (measured); a literal
-#: reds instead, and forces whoever edits either side to say what reads the
-#: reprieved docs from that root.
+#: and the test binds all three. The BIND is what reds a single-list edit; the
+#: literal expectation is defence in depth for a SYNCHRONISED shrink, which the
+#: bind cannot see and which stays GREEN unless it removes `scripts` (its own
+#: ⚠️ SCOPE note below).
 #:
 #: ⚠️ SCOPE, stated rather than overclaimed: this is a review PROMPT, not an
 #: enforced re-derivation. A SYNCHRONISED edit of the literals is GREEN only if
@@ -3340,11 +3340,14 @@ def test_the_content_census_sees_a_reader_end_to_end(tmp_path, monkeypatch):
     # `test_no_allowlisted_root_file_has_a_reader` vacuous for every reader under
     # `scripts/` — while the normalised bind stayed green (measured).
     assert "scripts/" in _CENSUS_ROOTS, (
-        "`_CENSUS_ROOTS`'s `scripts` entry lost its TRAILING SLASH — BSD grep does "
-        "not descend a symlinked directory named without one, so the mention "
-        "census silently searches NOTHING under scripts/ on macOS (see "
-        "`_readers_of`) and the allowlist ratchet goes vacuous for readers there. "
-        "The normalised bind above CANNOT see this.")
+        "`scripts` is no longer spelled `scripts/` in `_CENSUS_ROOTS`: either it "
+        "was RENAMED or DROPPED — then decide what reads the reprieved docs from "
+        "any replacement root — or it lost its TRAILING SLASH, which is "
+        "load-bearing: BSD grep does not descend a symlinked directory named "
+        "without one, so the mention census would silently search NOTHING under "
+        "scripts/ on macOS (see `_readers_of`) and the allowlist ratchet would go "
+        "vacuous for every reader there. The normalised bind above CANNOT see "
+        "either shape.")
     py_reader = ('from pathlib import Path\n'
                  'Path("CHANGELOG.md").read_text(encoding="utf-8")\n')
     for root in _CENSUS_ROOTS_PINNED:
