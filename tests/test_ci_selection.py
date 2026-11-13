@@ -3112,13 +3112,14 @@ _NON_CODE_DOC_ROOTS = ("tests", "tools", "scripts", ".github", "tortoise")
 #: reprieved docs from that root.
 #:
 #: ⚠️ SCOPE, stated rather than overclaimed: this is a review PROMPT, not an
-#: enforced re-derivation. A SYNCHRONISED edit of the literals is GREEN
-#: (measured) — the assertions can only red an edit that drops, adds or renames a
-#: root in one list and forgets the others. (The one edit the normalised bind
-#: ALSO cannot see is the `scripts/` TRAILING SLASH, which `rstrip` erases; that
-#: spelling is pinned separately in the test.) What they do pin is the
-#: MECHANISM: a reader under every declared root, in both file kinds, must come
-#: back, so a walk that stopped seeing readers reds.
+#: enforced re-derivation. A SYNCHRONISED edit of the literals is GREEN only if
+#: it PRESERVES `scripts` (measured: add `config` to all three, drop `tortoise`
+#: from all three) — so the assertions red an edit that drops, adds or renames a
+#: root in ONE list and forgets the others, AND any synchronised edit that
+#: REMOVES `scripts` (it trips the trailing-slash pin in the test: measured, all
+#: three -> `("tests",)` REDs). What they do pin is the MECHANISM: a reader
+#: under every declared root, in both file kinds, must come back, so a walk that
+#: stopped seeing readers reds.
 _CENSUS_ROOTS_PINNED = ("tests", "tools", "scripts", ".github", "tortoise")
 
 # A shell read operation. `read\b` deliberately does NOT match "reads" (word
@@ -3316,10 +3317,11 @@ def test_the_content_census_sees_a_reader_end_to_end(tmp_path, monkeypatch):
     Mutation checks (MEASURED, each reverted): `_NON_CODE_DOC_ROOTS` emptied ->
     RED; one root dropped from the CODE list only -> RED (the pin fires); `.sh`
     dropped from the walk's suffix filter -> RED (the `.sh` reader is never
-    seen). A synchronised edit of all three literals is GREEN — see the pin's
-    SCOPE note; that is the residual, not a hidden one. The `REPO` this test sets
-    cannot be overridden from outside, so pointing `REPO` elsewhere is NOT a
-    mutation.
+    seen). A SYNCHRONISED edit is GREEN only if it PRESERVES `scripts`
+    (measured: drop `tortoise` from all three -> GREEN; add `config` to all
+    three -> GREEN), and REDs when it removes `scripts` (measured: all three ->
+    `("tests",)`) — see the pin's SCOPE note. The `REPO` this test sets cannot be
+    overridden from outside, so pointing `REPO` elsewhere is NOT a mutation.
     """
     assert (tuple(r.rstrip("/") for r in _CENSUS_ROOTS)
             == _NON_CODE_DOC_ROOTS == _CENSUS_ROOTS_PINNED), (
