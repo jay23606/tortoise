@@ -3113,9 +3113,12 @@ _NON_CODE_DOC_ROOTS = ("tests", "tools", "scripts", ".github", "tortoise")
 #:
 #: ⚠️ SCOPE, stated rather than overclaimed: this is a review PROMPT, not an
 #: enforced re-derivation. A SYNCHRONISED edit of the literals is GREEN
-#: (measured) — the assertions can only red an edit that forgets one of them.
-#: What they do pin is the MECHANISM: a reader under every declared root, in
-#: both file kinds, must come back, so a walk that stopped seeing readers reds.
+#: (measured) — the assertions can only red an edit that drops, adds or renames a
+#: root in one list and forgets the others. (The one edit the normalised bind
+#: ALSO cannot see is the `scripts/` TRAILING SLASH, which `rstrip` erases; that
+#: spelling is pinned separately in the test.) What they do pin is the
+#: MECHANISM: a reader under every declared root, in both file kinds, must come
+#: back, so a walk that stopped seeing readers reds.
 _CENSUS_ROOTS_PINNED = ("tests", "tools", "scripts", ".github", "tortoise")
 
 # A shell read operation. `read\b` deliberately does NOT match "reads" (word
@@ -3305,10 +3308,10 @@ def test_the_content_census_sees_a_reader_end_to_end(tmp_path, monkeypatch):
     `_NON_CODE_DOC_ROOTS` — an expectation derived from the tuple shrinks with
     it, so dropping a root would leave the test green (measured: with the
     expectation derived, `_NON_CODE_DOC_ROOTS = ("tests",)` passes). A root is
-    therefore load-bearing in three ways: the pin reds on any edit to the tuple,
-    a synthetic reader under EVERY pinned root must come back, and a `.sh`
-    reader pins the walk's shell branch (`_content_read_in_shell` was otherwise
-    only exercised as a leaf).
+    therefore load-bearing in three ways: the pin reds on any edit that changes a
+    root NAME in one list, a synthetic reader under EVERY pinned root must come
+    back, and a `.sh` reader pins the walk's shell branch
+    (`_content_read_in_shell` was otherwise only exercised as a leaf).
 
     Mutation checks (MEASURED, each reverted): `_NON_CODE_DOC_ROOTS` emptied ->
     RED; one root dropped from the CODE list only -> RED (the pin fires); `.sh`
@@ -3324,6 +3327,18 @@ def test_the_content_census_sees_a_reader_end_to_end(tmp_path, monkeypatch):
         "`_CENSUS_ROOTS`) and the content census (`_content_readers_of`, "
         "`_NON_CODE_DOC_ROOTS`) must cover the SAME roots, or one of them is "
         "silently narrower than the other two (#1349/#3332/#3616)")
+    # The bind above NORMALISES, and rstrip("/") erases the one spelling that is
+    # load-bearing: `_readers_of` needs `scripts/` WITH the slash, because BSD
+    # grep does not descend a symlinked directory named without one (its own
+    # docstring: 0 hits vs 72 on macOS), which would make
+    # `test_no_allowlisted_root_file_has_a_reader` vacuous for every reader under
+    # `scripts/` — while the normalised bind stayed green (measured).
+    assert "scripts/" in _CENSUS_ROOTS, (
+        "`_CENSUS_ROOTS`'s `scripts` entry lost its TRAILING SLASH — BSD grep does "
+        "not descend a symlinked directory named without one, so the mention "
+        "census silently searches NOTHING under scripts/ on macOS (see "
+        "`_readers_of`) and the allowlist ratchet goes vacuous for readers there. "
+        "The normalised bind above CANNOT see this.")
     py_reader = ('from pathlib import Path\n'
                  'Path("CHANGELOG.md").read_text(encoding="utf-8")\n')
     for root in _CENSUS_ROOTS_PINNED:
