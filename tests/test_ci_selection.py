@@ -3240,6 +3240,37 @@ def test_non_code_doc_paths_have_no_content_reader():
         f"smoke would skip those guards on the PR that edits the file: {offenders}")
 
 
+def test_the_content_census_can_see_a_reader():
+    """NON-VACUITY for the census above (#12448 review, P2).
+
+    `test_non_code_doc_paths_have_no_content_reader` asserts `assert not
+    offenders` over every member — and after #12443 removed `CONTRIBUTING.md`
+    every remaining member answers `[]` (measured: `.github/
+    pull_request_template.md`, `CHANGELOG.md`, `CLAUDE.md`). A DETECTOR that
+    returned `[]` for everything would therefore leave that ratchet green
+    forever: rename a `_READ_CALLS` entry, change the AST shape it matches, or
+    let the `_NON_CODE_DOC_ROOTS` walk skip an absent root — the last one the
+    census's own docstring warns about — and the guard protects nothing while
+    reporting clean. The sibling `test_no_allowlisted_root_file_has_a_reader`
+    cannot cover it: it derives readers with `_readers_of`, the GREP-based
+    MENTION census, so a broken content-read detector is invisible to it.
+
+    This pins one positive and one negative per detector, so the census cannot
+    pass by seeing nothing. It is not a claim about the walk's coverage — that
+    limitation is stated in `_content_readers_of`'s own SCOPE note.
+    """
+    assert _content_read_in_py(
+        'c = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")\n',
+        "CONTRIBUTING.md",
+    ), "a literal-path read call must be SEEN"
+    assert not _content_read_in_py(
+        'x = "CONTRIBUTING.md"\n', "CONTRIBUTING.md",
+    ), "a bare mention is not a read — the census must not cry wolf"
+    assert _content_read_in_shell(
+        "cat CONTRIBUTING.md\n", "CONTRIBUTING.md",
+    ), "a shell read op must be SEEN"
+
+
 def test_non_code_docs_select_tier1_not_full(monkeypatch):
     """#8785: a prose doc no guard reads selects the tier-1 smoke, not FULL."""
     members = sorted(cs.NON_CODE_DOC_PATHS)
@@ -4424,7 +4455,7 @@ def test_the_step1_eval_evidence_doc_selects_core_not_tier1():
     MEASURED before the CORE_ALSO entry (`select()` in-process):
     `select(["docs/ax/how-to-use-tortoise-step1-eval.md"])` → `surfaces=[]`,
     `full=False`, pin ABSENT. `docs/` is a flat NON_PYTHON_PREFIXES
-    entry and `_is_non_code_doc` recognises four exact paths, so the changed
+    entry and `_is_non_code_doc` recognises only exact paths, so the changed
     list came back empty and `select()` took the docs-only early return. A
     one-file PR could therefore re-cut the headline to any number and merge with
     the guard that re-measures it never having run — the #1349/#3332/#3616

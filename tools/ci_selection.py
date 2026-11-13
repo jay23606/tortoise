@@ -2618,7 +2618,7 @@ CORE_ALSO = ("tortoise/api.py", "tortoise/hosted_backup.py", "tools/skip-guard.p
              # `select(["docs/ax/how-to-use-tortoise-step1-eval.md"])` →
              # `surfaces=[]`, `full=False`, pin ABSENT. `docs/` is a
              # flat NON_PYTHON_PREFIXES entry and `_is_non_code_doc` recognises
-             # four exact paths, so the changed list comes back empty and
+             # only exact paths, so the changed list comes back empty and
              # select() takes the docs-only early return — tier-1 smoke, which
              # does not carry the pin. A one-file PR could therefore re-cut the
              # headline to any number and merge with the guard that re-measures
@@ -3502,7 +3502,7 @@ def _is_safe_root_file(path: str) -> bool:
 # case, so — at that head — no test or tool read its CONTENT. That census was
 # correct then and is FALSE now: `#12313` (`45cebfc5df`) added the reader IN
 # `tests/test_surface_manifest.py` — a suite that already existed (created by
-# `#9638`), not a file `#12313` created — which READS the doc
+# `#3966`, `79c3d9dbe`), not a file `#12313` created — which READS the doc
 # (`(sm.ROOT / "CONTRIBUTING.md").read_text(...)`) and asserts on its
 # "**To REMOVE a symbol**" paragraph. By this set's OWN membership rule the entry
 # had to go, and leaving it reprieved is a fail-open: an edit to `CONTRIBUTING.md`
