@@ -3502,21 +3502,26 @@ def _is_safe_root_file(path: str) -> bool:
 # case, so — at that head — no test or tool read its CONTENT. That census was
 # correct then and is FALSE now: `#12313` (`45cebfc5df`) added the reader IN
 # `tests/test_surface_manifest.py` — a suite that already existed (created on
-# `main` by `#9638`, `6429a14b49`) — which READS the doc
+# `main` by `#3966`, `79c3d9dbe`) — which READS the doc
 # (`(sm.ROOT / "CONTRIBUTING.md").read_text(...)`) and asserts on its
-# "**To REMOVE a symbol**" paragraph. ⛔ Two WRONG creation numbers have already
-# been written into this sentence, in opposite directions, so state the
-# measurement with the command: on `main`,
-# `git log --diff-filter=A -- tests/test_surface_manifest.py` returns EXACTLY
-# `6429a14b49` (`#9638`). `#12313` did not create the file (it appended the
-# reader — the original error). `#3966` / `79c3d9dbe` is NOT the answer either:
-# that commit creates a 605-line `tests/test_surface_manifest.py` on a line of
-# history that is NOT reachable from `main` (`git merge-base --is-ancestor
-# 79c3d9dbe origin/main` → false; it is contained by side/backup branches only),
-# and it is what a `--all` reading reports — so cite the `main` answer, not the
-# `--all` one. `git log -S 9638 -- tests/test_surface_manifest.py` being empty
-# proves NOTHING here: the number is in the commit SUBJECT, and `-S` searches
-# added/removed CONTENT. Re-derive with the `--diff-filter=A` command on `main`.
+# "**To REMOVE a symbol**" paragraph. ⛔ THREE creation numbers have now been
+# written into this sentence and TWO of them were wrong, so state the
+# measurement WITH the command: on `main`,
+# `git log origin/main --diff-filter=A -- tests/test_surface_manifest.py`
+# returns EXACTLY `79c3d9dbe` (`#3966`); the path has no `--diff-filter=D` commit
+# at all, so it was never deleted and re-created; and
+# `git merge-base --is-ancestor 79c3d9dbe origin/main` is TRUE. The two wrong
+# readings, so neither is inherited a fourth time: `#12313` did not create the
+# file (it appended the reader — the original error), and `#9638`
+# (`6429a14b49`) is an unrelated `#9555` commit that never touches this path —
+# it shows up as "the add" only in a clone whose object DB is incomplete, where
+# a path-limited `--diff-filter=A` can report a later commit as the add (this
+# checkout prints `exists in commit-graph but not in the object database` for
+# other commits, which is that shape). Cross-check against the server, which is
+# authoritative:
+# `gh api "repos/daniel-ospina/tortoise/commits?path=tests/test_surface_manifest.py&sha=main"`
+# lists `79c3d9dbe` as the OLDEST of the 30 commits on that path. Re-derive
+# before re-admitting the entry; do not inherit a number from this comment.
 #
 # By this set's OWN membership rule the entry
 # had to go, and leaving it reprieved is a fail-open: an edit to `CONTRIBUTING.md`
