@@ -3310,31 +3310,25 @@ def test_the_content_census_sees_a_reader_end_to_end(tmp_path, monkeypatch):
     That is not hypothetical on CI, where `scripts/` is absent by design (it is a
     machine-local symlink, #9475), so the walk is permanently narrower there.
 
-    ⛔ The expectation is built from a LITERAL pin rather than from
-    `_NON_CODE_DOC_ROOTS`, as DEFENCE IN DEPTH — NOT as a live detector. At this
-    head it never fires: the bind below forces all three lists equal, so a
-    SYNCHRONISED shrink arrives with a MATCHING literal expectation and passes
-    (MEASURED: drop `tortoise` from all three -> GREEN; add `config` to all
-    three -> GREEN; rename `tools`->`toolz` in all three -> GREEN) — and a derived
-    expectation measures the same GREEN, so the literal buys nothing TODAY. It
-    becomes discriminative only once the bind is LOOSENED (MEASURED: loosened
-    bind + one-list shrink -> the literal REDs here, a derived expectation stays
-    GREEN). A root is load-bearing in three ways, and NOT all of them are this
-    assertion: the BIND reds on any edit that changes a root NAME in one list,
-    the trailing-slash pin reds when `scripts` loses its slash, a synthetic
-    reader under EVERY pinned root must come back, and a `.sh` reader pins the
-    walk's shell branch
-    (`_content_read_in_shell` was otherwise only exercised as a leaf).
+    ⛔ The expectation is built from a LITERAL tuple rather than from
+    `_NON_CODE_DOC_ROOTS`, as DEFENCE IN DEPTH — not as a live detector: the BIND
+    below forces the lists to be equal before this comparison is reached, so a
+    shrunk tuple cannot arrive here with a matching expectation. It is kept
+    because it becomes discriminative the moment the bind is loosened (MEASURED:
+    loosened bind + one-list shrink -> the literal REDs here, a derived
+    expectation stays GREEN). Before the bind and the trailing-slash pin landed,
+    deriving the expectation DID leave this green over a shrunk tuple — measured
+    then; do not re-use that reading.
 
-    Mutation checks (MEASURED, each reverted): `_NON_CODE_DOC_ROOTS` emptied ->
-    RED at the BIND; one root dropped from ONE list -> RED at the BIND (the
-    "diverged" message — not the expectation below); `.sh` dropped from the
-    walk's suffix filter -> RED at the expectation (the `.sh` reader is never
-    seen). A SYNCHRONISED edit is GREEN only if it PRESERVES `scripts`
-    (measured: drop `tortoise` from all three -> GREEN; add `config` to all
-    three -> GREEN), and REDs when it removes `scripts` (measured: all three ->
-    `("tests",)`) — see the pin's SCOPE note. The `REPO` this test sets cannot be
-    overridden from outside, so pointing `REPO` elsewhere is NOT a mutation.
+    What this test REDS, MEASURED with the mutant that should cause each (the full
+    row-by-row matrix is recorded on PR #12448): a single-list edit of any root
+    (the BIND), a synchronised edit that removes or renames `scripts` (the
+    trailing-slash pin), a walk that stops seeing readers (this comparison), and
+    a walk that drops `.sh` (the `.sh` reader below). A SYNCHRONISED edit that
+    PRESERVES `scripts` is GREEN — drop `tortoise` from all three, or add
+    `config` to all three — which is the stated residual, not a hidden one. The
+    `REPO` this test sets cannot be overridden from outside, so pointing `REPO`
+    elsewhere is NOT a mutation.
     """
     assert (tuple(r.rstrip("/") for r in _CENSUS_ROOTS)
             == _NON_CODE_DOC_ROOTS == _CENSUS_ROOTS_PINNED), (
