@@ -865,6 +865,25 @@ WAIT_BOUND_BREACH_COUNT = Counter(
 # know exist".
 for _surface in _WAIT_BOUND_SURFACES:      # bounded by construction
     WAIT_BOUND_BREACH_COUNT.labels(surface=_surface)
+
+# #10749: an MCP health probe whose cold-start allowance was CLAMPED under the transport bound it
+# is served under — the caller then gets `status="unknown"` (an honest non-answer) instead of the
+# transport's `-32009 "wait budget exceeded"` (which reads as "the queue is busy").
+#
+# ⛔ WHY IT NEEDS A COUNTER AT ALL. The clamp CONVERTS a counted symptom into an uncounted one: a
+# slow store no longer breaches the transport bound (so `WAIT_BOUND_BREACH_COUNT` above stops
+# rising, by design), `errors` is reached only from the `graph_size` arm, and the `mcp_tool_call`
+# telemetry row now classifies as `ok` because the payload carries no top-level `error` string.
+# The per-call `setup_timeout_clamped` marker is enough for a CALLER and useless to an operator, so
+# without this counter "how often is health degraded to unknown?" has no answer anywhere — the same
+# shape of blindness #10602 removed for refusals. Unlabelled on purpose: the value is a single
+# fact, and a plain `Counter` is exported at 0 the moment it is registered, so the absent-vs-zero
+# rule the channel above is built on needs no child initialisation here.
+HEALTH_SETUP_CLAMPED_COUNT = Counter(
+    "tortoise_health_setup_clamped_total",
+    "MCP health probes whose cold-start allowance was clamped under the transport wait bound "
+    "(#10749) — the probe may then be unobserved, so status='unknown'",
+)
 # #10515: a LEGITIMATE revision was refused by `update_point`'s ABSENT arm.
 #
 # The arm itself is #10119's and is correct: an id absent from the live graph at
@@ -1729,6 +1748,23 @@ def record_wait_bound_breach(surface: str) -> None:
             f"bounded to {_WAIT_BOUND_SURFACES} so the health report's "
             f"zero-padding cannot omit a counted surface")
     WAIT_BOUND_BREACH_COUNT.labels(surface=surface).inc()
+
+
+def record_health_setup_clamp() -> None:
+    """Count one MCP health probe whose cold-start allowance was CLAMPED (#10749).
+
+    Called from ``mcp_server.tortoise_health``'s report builder at the point the clamp is
+    applied, so the count and the ``setup_timeout_clamped`` marker on that same report are two
+    views of one decision. The clamp moves a degradation from a REFUSAL (which
+    ``WAIT_BOUND_BREACH_COUNT`` above counted) to an honest ``status="unknown"`` (which nothing
+    counted), so this is the only aggregate that keeps "health is being clamped" answerable.
+    """
+    HEALTH_SETUP_CLAMPED_COUNT.inc()
+
+
+def health_setup_clamped_count() -> int:
+    """Current value of ``HEALTH_SETUP_CLAMPED_COUNT`` (#10749); ``0`` when unreadable."""
+    return _counter_val(HEALTH_SETUP_CLAMPED_COUNT)
 
 
 def wait_bound_breach_counts() -> dict:
@@ -6058,6 +6094,12 @@ def metrics(sdk=None, setup_timeout=None) -> dict:
         # It does NOT feed `status`: `degraded` stays reserved for an observed
         # probe failure (see `metrics`'s own note), so this is additive only.
         "wait_bound_breaches": wait_bound_breach_counts(),
+        # #10749: the counts above go FLAT when the clamp does its job (a clamped probe no longer
+        # breaches the bound), so the refusal channel cannot report "health is degraded to
+        # unknown". This is that channel's positive pair: how many health probes spent a clamped
+        # allowance. `0` is a real zero (an unlabelled counter is exported from registration), so
+        # "no clamp was measured" and "this build cannot see clamps" stay distinguishable.
+        "health_setup_clamped": health_setup_clamped_count(),
         # #9307 review F1: a DURABLE journal whose append could not prove the
         # record's position writes no layer-1 row (a replay heals it). Its own
         # key, so neither the failure counter nor the non-journal skip counter

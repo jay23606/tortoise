@@ -3,6 +3,7 @@ from __future__ import annotations  # noqa: I001
 
 import asyncio
 import contextlib
+import contextvars
 import inspect
 import json
 import logging
@@ -649,6 +650,84 @@ def _wait_bound_arrival() -> float | None:
         if isinstance(stamp, (int, float)):
             return float(stamp)
     return None
+
+
+#: #10749: the deadline the wait-bound seam ACTUALLY gave this dispatch, as a ContextVar.
+#:
+#: ``_wait_bound_arrival()`` is None on stdio and on the self-hosted apps (only
+#: ``hosted_api.WaitBoundMiddleware`` writes that stamp) — but the seam still enforces the FULL
+#: ``_TRANSPORT_WAIT_BOUND_S`` there (``remaining = float(_mcp_auth._TRANSPORT_WAIT_BOUND_S)  #
+#: stdio / no HTTP request``), so "no stamp" is NOT "no deadline": re-deriving the deadline from
+#: the stamp alone read that arm as unbounded and left the tool's 26.0 s tail inside a 10.0 s
+#: bound, which is #10749's defect preserved on stdio and self-hosted HTTP.
+#: Reading the seam's OWN number is what makes the clamp describe the deadline that refuses the
+#: call rather than a second one computed here. `None` therefore means "the seam never ran" — a
+#: direct in-process call (a unit test, ``_original_call_tool`` reached unwrapped) — which is the
+#: only state where #3143's unclamped allowance is still the right answer.
+_WAIT_BOUND_REMAINING: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "tortoise_wait_bound_remaining", default=None)
+
+
+#: #10749: the margin kept back from the transport deadline AFTER the health tool's other three
+#: bounded phases, so a clamped report still has time to be serialised and delivered before the
+#: caller's own deadline expires. Nothing waits on it — it is a reserve, not a timeout.
+_HEALTH_TAIL_MARGIN_S = 0.5
+
+
+def _mcp_remaining_wait_bound() -> float | None:
+    """The deadline the wait-bound seam gave THIS dispatch, or None when the seam never ran.
+
+    Prefers the ContextVar the seam binds (it covers stdio and the self-hosted apps, where no
+    arrival stamp exists but the bound is still enforced). Falls back to the arrival stamp for a
+    call that reached the tool body without the seam binding — the stamp is still a real deadline.
+    """
+    bound = _WAIT_BOUND_REMAINING.get()
+    if bound is not None:
+        return max(0.0, float(bound))
+    arrival = _wait_bound_arrival()
+    if arrival is None:
+        return None
+    return max(0.0, float(_mcp_auth._TRANSPORT_WAIT_BOUND_S)
+               - (_time.monotonic() - arrival))
+
+
+def _health_tail_reserve() -> float:
+    """Everything ``tortoise_health`` spends BESIDES its cold-start allowance (#10749).
+
+    None of these three is negotiable, which is why only the allowance is clamped:
+    ``monitoring.probe_db`` charges an explicit ``setup_timeout`` ONE deadline of
+    ``setup_timeout + PROBE_TIMEOUT``; ``metrics`` then spends ``GRAPH_SIZE_TIMEOUT`` on its own
+    worker; and the ``quota`` block spends ``quota.QUOTA_STATE_TIMEOUT`` on its own daemon
+    worker (#11892 option (3)).
+    """
+    from tortoise.quota import QUOTA_STATE_TIMEOUT
+
+    return (monitoring.PROBE_TIMEOUT + monitoring.GRAPH_SIZE_TIMEOUT
+            + QUOTA_STATE_TIMEOUT + _HEALTH_TAIL_MARGIN_S)
+
+
+def _health_setup_allowance(remaining: float) -> float:
+    """The cold-start allowance ``tortoise_health`` may spend inside ``remaining`` (#10749).
+
+    Unclamped, this tool's bounded tail is ``probe_setup_timeout() + PROBE_TIMEOUT +
+    GRAPH_SIZE_TIMEOUT + QUOTA_STATE_TIMEOUT`` — **26.0 s** at the shipped defaults — inside a
+    **10.0 s** transport bound that ``_await_under_mcp_wait_bound`` applies to EVERY tool, with
+    no allowlist and no exemption. A reachable store is therefore refused with the transport's
+    own vocabulary (*"the server's wait budget for this request was exceeded"*), which reads as
+    "the queue is busy" and says nothing about the tool's budget.
+
+    Measured 2026-11-13 on the deployed process (#10749): the tool answered **2 of 27** attempts,
+    and the one timed success spent **6.96 s** of its **10.77 s** round trip in the DB probe —
+    i.e. ~3.8 s of the bound is gone before the probe's first byte, so the refusal becomes
+    certain once ``db.latency_ms`` exceeds ~6.2 s.
+
+    The clamp only ever REDUCES, so #3143's cold-start allowance survives wherever it fits. When
+    it does not fit, the probe reports an UNOBSERVED result, ``metrics`` maps that to ``ok=None``
+    / ``status="unknown"`` (#3683), and the report carries ``setup_timeout_clamped_s`` — so the
+    caller can tell "the allowance was clamped" from "the store is broken".
+    """
+    return max(0.0, min(monitoring.probe_setup_timeout(),
+                       remaining - _health_tail_reserve()))
 
 
 def _wait_bound_refused() -> bool:
@@ -1384,7 +1463,17 @@ async def _await_under_mcp_wait_bound(name: str, arguments, *, version,
             task_meta=task_meta) if graph_ref is None else
             _scoped_dispatch(name, arguments, graph_ref, version=version,
                              task_meta=task_meta))
-        task = asyncio.ensure_future(dispatch)
+        # #10749: bind the deadline THIS seam is about to enforce, so a handler that
+        # owns its own bounded phases (tortoise_health) can clamp them under it
+        # instead of re-deriving a deadline from the arrival stamp — which does not
+        # exist on stdio or the self-hosted apps even though the bound still applies.
+        # Set BEFORE the task is created so the task's copied context carries it; the
+        # reset below touches only this frame's binding, never the task's copy.
+        bound_token = _WAIT_BOUND_REMAINING.set(remaining)
+        try:
+            task = asyncio.ensure_future(dispatch)
+        finally:
+            _WAIT_BOUND_REMAINING.reset(bound_token)
     try:
         # ``wait_for`` + ``shield`` rather than ``asyncio.wait`` — the same
         # primitive choice as ``hosted_api.WaitBoundMiddleware.__call__``. The
@@ -5122,7 +5211,23 @@ def tortoise_health() -> dict:
     ``probe_setup_timeout() + PROBE_TIMEOUT + GRAPH_SIZE_TIMEOUT +
     QUOTA_STATE_TIMEOUT`` — still a bounded tail, never "as long as the server
     stalls". The block never changes ``status`` (a full graph is not a degraded
-    process — see ``_org_quota_block``) and never raises."""
+    process — see ``_org_quota_block``) and never raises.
+
+    #10749 (health-honest): that 26.0 s tail is a budget this tool was never ALLOWED
+    to spend. ``_await_under_mcp_wait_bound`` serves EVERY tool under
+    ``mcp_auth._TRANSPORT_WAIT_BOUND_S`` (10.0 s) — no allowlist, no exemption — so the
+    handler was arithmetically guaranteed to be refused on a reachable store once its
+    probe ran slower than ~6.2 s. Measured 2026-11-13 on the deployed process: **2 of 27**
+    attempts answered, the one timed success spending 6.96 s of a 10.77 s round trip in the
+    DB probe. The allowance is therefore CLAMPED to
+    ``remaining − (PROBE_TIMEOUT + GRAPH_SIZE_TIMEOUT + QUOTA_STATE_TIMEOUT + margin)``
+    (``_health_setup_allowance``) under the deadline the seam itself bound into
+    ``_WAIT_BOUND_REMAINING`` — NOT re-derived from the arrival stamp, which does not exist on
+    stdio or the self-hosted apps even though the bound still applies there. The clamp only
+    REDUCES, so #3143's allowance stands wherever it fits; where it does not, the probe is
+    unobserved and ``status="unknown"`` (#3683) carries the truth, and ``setup_timeout_clamped``
+    (a boolean — the duration beside it can be a falsy 0.0) names the clamp so an unknown is
+    never read as a broken store."""
     # #236: route through _safe() so every tool is gated (defense-in-depth;
     # reachable only post-auth over HTTP).
     # #3143: pass the cold-start allowance (call-time resolved) so a reachable
@@ -5132,13 +5237,31 @@ def tortoise_health() -> dict:
     # block's count is measured on the SAME handle this report uses — "count on
     # the SAME org SDK the tool writes to" is the gate's own rule
     # (quota.enforce_org_limit); a second handle could open another graph.
+    # #10749: the allowance is CLAMPED under the transport deadline the tool is served under.
+    # Unclamped, this handler's tail (26.0 s) is 2.6x the 10.0 s bound, so a reachable store was
+    # refused with the transport's "wait budget exceeded" text. The clamp only reduces, and the
+    # report says when it did, so `status="unknown"` is never mistaken for a broken store.
     def _report() -> dict:
         sdk = _get_org_sdk()
+        remaining = _mcp_remaining_wait_bound()
+        allowance = (monitoring.probe_setup_timeout() if remaining is None
+                     else _health_setup_allowance(remaining))
         report = monitoring.metrics(
             sdk=sdk,
-            setup_timeout=monitoring.probe_setup_timeout(),
+            setup_timeout=allowance,
         )
         if isinstance(report, dict):
+            if allowance < monitoring.probe_setup_timeout():
+                # #10749 review: TWO views of one decision, because either alone is misread.
+                # The BOOLEAN is the discriminator — the duration can legitimately be `0.0`
+                # (a spent deadline), which is falsy, so `if report.get("setup_timeout_clamped_s")`
+                # would read the most severe clamp as "not clamped" (the repo's `graph_size_error
+                # is None` / `db.ok is None` convention: a marker must never be falsy when it
+                # fires). The COUNT is the aggregate — the clamp turns a counted refusal into an
+                # uncounted `unknown`, so without it a fleet-wide degradation moves no counter.
+                monitoring.record_health_setup_clamp()
+                report["setup_timeout_clamped"] = True
+                report["setup_timeout_clamped_s"] = allowance
             report["quota"] = _org_quota_block(sdk)
         return report
 
